@@ -13,6 +13,7 @@ function App() {
   const [colors, setColors] = useState([])
   const [clueText, setClueText] = useState('')
   const [selectedColor, setSelectedColor] = useState(null)
+  const [timeRemaining, setTimeRemaining] = useState(60)
 
   useEffect(() => {
     fetchColors()
@@ -26,6 +27,20 @@ function App() {
       return () => clearInterval(interval)
     }
   }, [gameId, playerId, gameState])
+
+  useEffect(() => {
+    const phase = gameData?.phase || 'hinting'
+    const guessingTimerStart = gameData?.guessing_timer_start
+    
+    if (phase === 'guessing' && guessingTimerStart) {
+      const interval = setInterval(() => {
+        const elapsed = (Date.now() / 1000) - guessingTimerStart
+        const remaining = Math.max(0, Math.ceil(60 - elapsed))
+        setTimeRemaining(remaining)
+      }, 1000)
+      return () => clearInterval(interval)
+    }
+  }, [gameData?.phase, gameData?.guessing_timer_start])
 
   const fetchColors = async () => {
     try {
@@ -284,22 +299,7 @@ function App() {
     const isCurrentPlayer = gameData?.current_player === playerId
     const targetColor = gameData?.target_color
     const phase = gameData?.phase || 'hinting'
-    const guessingTimerStart = gameData?.guessing_timer_start
     const playersWhoGuessed = gameData?.players_who_guessed || []
-    
-    // Calculate remaining time for guessing phase
-    const [timeRemaining, setTimeRemaining] = React.useState(60)
-    
-    React.useEffect(() => {
-      if (phase === 'guessing' && guessingTimerStart) {
-        const interval = setInterval(() => {
-          const elapsed = (Date.now() / 1000) - guessingTimerStart
-          const remaining = Math.max(0, Math.ceil(60 - elapsed))
-          setTimeRemaining(remaining)
-        }, 1000)
-        return () => clearInterval(interval)
-      }
-    }, [phase, guessingTimerStart])
 
     const getPhaseMessage = () => {
       if (isCurrentPlayer) {
