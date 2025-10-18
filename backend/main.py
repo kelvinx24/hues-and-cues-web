@@ -214,15 +214,35 @@ def make_guess(game_id: str, guess: Guess):
         "correct": distance == 0
     })
     
-    # If correct, award points and end round
+    # If correct, award points and start new round
     if distance == 0:
         game["scores"][guess.player_id] += 5
         game["scores"][game["current_player"]] += 3
+        
+        # Start a new round with a new color and next player
+        current_player_index = next(
+            (i for i, p in enumerate(game["players"]) if p["id"] == game["current_player"]),
+            0
+        )
+        next_player_index = (current_player_index + 1) % len(game["players"])
+        game["current_player"] = game["players"][next_player_index]["id"]
+        
+        # Pick new target color
+        row = random.randint(0, len(COLORS) - 1)
+        col = random.randint(0, len(COLORS[0]) - 1)
+        game["target_color"] = (row, col)
+        
+        # Clear guesses and clues for new round
+        game["guesses"] = []
+        game["clues"] = []
+        
         return {
             "correct": True,
             "message": "Correct guess!",
             "distance": distance,
-            "target_color": game["target_color"]
+            "target_color": (target_row, target_col),
+            "new_round": True,
+            "next_player": game["current_player"]
         }
     
     return {

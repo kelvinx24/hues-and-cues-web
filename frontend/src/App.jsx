@@ -144,7 +144,11 @@ function App() {
       const data = await response.json()
       
       if (data.correct) {
-        alert('Correct! 🎉')
+        if (data.new_round) {
+          alert('Correct! 🎉 Starting new round...')
+        } else {
+          alert('Correct! 🎉')
+        }
       } else {
         alert(`Distance from target: ${data.distance}`)
       }
