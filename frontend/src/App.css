@@ -388,6 +388,34 @@
   font-size: 2rem;
 }
 
+.color-cell.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.color-cell.disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.phase-indicator {
+  background: rgba(255, 255, 255, 0.2);
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.round-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.round-controls .btn {
+  width: 100%;
+}
+
 /* Responsive Design */
 @media (max-width: 1024px) {
   .game-content {

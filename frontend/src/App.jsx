@@ -13,6 +13,7 @@ function App() {
   const [colors, setColors] = useState([])
   const [clueText, setClueText] = useState('')
   const [selectedColor, setSelectedColor] = useState(null)
+  const [timeRemaining, setTimeRemaining] = useState(60)
 
   useEffect(() => {
     fetchColors()
@@ -26,6 +27,20 @@ function App() {
       return () => clearInterval(interval)
     }
   }, [gameId, playerId, gameState])
+
+  useEffect(() => {
+    const phase = gameData?.phase || 'hinting'
+    const guessingTimerStart = gameData?.guessing_timer_start
+    
+    if (phase === 'guessing' && guessingTimerStart) {
+      const interval = setInterval(() => {
+        const elapsed = (Date.now() / 1000) - guessingTimerStart
+        const remaining = Math.max(0, Math.ceil(60 - elapsed))
+        setTimeRemaining(remaining)
+      }, 1000)
+      return () => clearInterval(interval)
+    }
+  }, [gameData?.phase, gameData?.guessing_timer_start])
 
   const fetchColors = async () => {
     try {
@@ -118,16 +133,62 @@ function App() {
     }
 
     try {
-      await fetch(`${API_URL}/game/${gameId}/clue`, {
+      const response = await fetch(`${API_URL}/game/${gameId}/clue`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ player_id: playerId, clue_text: clueText })
       })
+      if (!response.ok) {
+        const error = await response.json()
+        alert(error.detail || 'Failed to give clue')
+        return
+      }
       setClueText('')
       fetchGameState()
     } catch (error) {
       console.error('Failed to give clue:', error)
       alert('Failed to give clue')
+    }
+  }
+
+  const continueRound = async () => {
+    try {
+      const response = await fetch(`${API_URL}/game/${gameId}/continue_round?player_id=${playerId}`, {
+        method: 'POST'
+      })
+      if (!response.ok) {
+        const error = await response.json()
+        alert(error.detail || 'Failed to continue round')
+        return
+      }
+      fetchGameState()
+    } catch (error) {
+      console.error('Failed to continue round:', error)
+      alert('Failed to continue round')
+    }
+  }
+
+  const endRound = async () => {
+    try {
+      const response = await fetch(`${API_URL}/game/${gameId}/end_round?player_id=${playerId}`, {
+        method: 'POST'
+      })
+      if (!response.ok) {
+        const error = await response.json()
+        alert(error.detail || 'Failed to end round')
+        return
+      }
+      const data = await response.json()
+      // Show the previous color to all players
+      if (data.previous_color) {
+        const [row, col] = data.previous_color
+        const colorValue = colors[row]?.[col]
+        alert(`Round ended! The color was at position (${row}, ${col})`)
+      }
+      fetchGameState()
+    } catch (error) {
+      console.error('Failed to end round:', error)
+      alert('Failed to end round')
     }
   }
 
@@ -141,14 +202,17 @@ function App() {
           color_position: [row, col] 
         })
       })
+      
+      if (!response.ok) {
+        const error = await response.json()
+        alert(error.detail || 'Failed to make guess')
+        return
+      }
+      
       const data = await response.json()
       
       if (data.correct) {
-        if (data.new_round) {
-          alert('Correct! 🎉 Starting new round...')
-        } else {
-          alert('Correct! 🎉')
-        }
+        alert('Correct! 🎉')
       } else {
         alert(`Distance from target: ${data.distance}`)
       }
@@ -234,6 +298,33 @@ function App() {
   const renderGame = () => {
     const isCurrentPlayer = gameData?.current_player === playerId
     const targetColor = gameData?.target_color
+    const phase = gameData?.phase || 'hinting'
+    const playersWhoGuessed = gameData?.players_who_guessed || []
+
+    const getPhaseMessage = () => {
+      if (isCurrentPlayer) {
+        if (phase === 'hinting') {
+          return '💡 Give a hint to start the guessing phase'
+        } else if (phase === 'guessing') {
+          return '⏳ Waiting for players to guess...'
+        } else if (phase === 'end_round') {
+          return '🎯 Choose to continue or end the round'
+        }
+      } else {
+        if (phase === 'hinting') {
+          return '⌛ Waiting for hint...'
+        } else if (phase === 'guessing') {
+          const hasGuessed = playersWhoGuessed.includes(playerId)
+          if (hasGuessed) {
+            return '✓ You have guessed, waiting for others...'
+          }
+          return `🎯 Make your guess! (${timeRemaining}s remaining)`
+        } else if (phase === 'end_round') {
+          return '⏳ Waiting for cue giver to decide...'
+        }
+      }
+      return ''
+    }
 
     return (
       <div className="game-container">
@@ -242,6 +333,9 @@ function App() {
           <div className="game-info-bar">
             <span>Game ID: {gameId}</span>
             <span>Players: {gameData?.players?.length}</span>
+            <span className="phase-indicator">
+              Phase: {phase === 'hinting' ? '💡 Hinting' : phase === 'guessing' ? '🎯 Guessing' : '📊 End Round'}
+            </span>
           </div>
         </div>
 
@@ -251,7 +345,7 @@ function App() {
               {isCurrentPlayer ? (
                 <div className="your-turn">
                   <h3>🎯 Your Turn!</h3>
-                  <p>Give clues to help others guess your color</p>
+                  <p>{getPhaseMessage()}</p>
                   {targetColor && (
                     <div 
                       className="target-color-preview"
@@ -260,20 +354,30 @@ function App() {
                       Your Target Color
                     </div>
                   )}
+                  {phase === 'end_round' && (
+                    <div className="round-controls">
+                      <button onClick={continueRound} className="btn btn-primary">
+                        Continue Round
+                      </button>
+                      <button onClick={endRound} className="btn btn-secondary">
+                        End Round
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="others-turn">
-                  <h3>Waiting...</h3>
-                  <p>
+                  <h3>
                     {gameData?.players?.find(p => p.id === gameData?.current_player)?.name || 'Someone'}'s turn
-                  </p>
+                  </h3>
+                  <p>{getPhaseMessage()}</p>
                 </div>
               )}
             </div>
 
             <div className="clues-section">
               <h3>Clues</h3>
-              {isCurrentPlayer && (
+              {isCurrentPlayer && phase === 'hinting' && (
                 <div className="clue-input-group">
                   <input
                     type="text"
@@ -284,7 +388,7 @@ function App() {
                     className="input-field"
                   />
                   <button onClick={giveClue} className="btn btn-small">
-                    Send
+                    Send Hint
                   </button>
                 </div>
               )}
@@ -332,7 +436,10 @@ function App() {
           <div className="board-container">
             <h2>Color Board</h2>
             <p className="board-instruction">
-              {isCurrentPlayer ? 'This is your target color board' : 'Click a color to make a guess'}
+              {isCurrentPlayer ? 'This is your target color board' : 
+               phase === 'guessing' && !playersWhoGuessed.includes(playerId) ? 
+               'Click a color to make a guess' : 
+               'Wait for the next phase'}
             </p>
             <div className="color-grid">
               {colors.map((row, rowIndex) => (
@@ -342,13 +449,14 @@ function App() {
                     const wasGuessed = gameData?.guesses?.some(
                       g => g.position[0] === rowIndex && g.position[1] === colIndex
                     )
+                    const canClick = !isCurrentPlayer && phase === 'guessing' && !playersWhoGuessed.includes(playerId)
                     
                     return (
                       <div
                         key={`${rowIndex}-${colIndex}`}
-                        className={`color-cell ${isTarget ? 'target' : ''} ${wasGuessed ? 'guessed' : ''}`}
+                        className={`color-cell ${isTarget ? 'target' : ''} ${wasGuessed ? 'guessed' : ''} ${!canClick ? 'disabled' : ''}`}
                         style={{ backgroundColor: color }}
-                        onClick={() => !isCurrentPlayer && makeGuess(rowIndex, colIndex)}
+                        onClick={() => canClick && makeGuess(rowIndex, colIndex)}
                         title={`(${rowIndex}, ${colIndex})`}
                       >
                         {isTarget && <span className="target-marker">🎯</span>}
