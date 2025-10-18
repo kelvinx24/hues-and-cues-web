@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import './App.css'
 
-const API_URL = 'http://localhost:8000'
+const API_URL = 'http://localhost:8001'
 
 function App() {
   const [gameState, setGameState] = useState('menu') // menu, lobby, playing

@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict
 import random
 import uuid
+from enum import Enum
 
 app = FastAPI(title="Hues and Cues Game API")
 
@@ -44,6 +45,12 @@ COLORS = [
     ["#000000", "#2F4F4F", "#696969", "#808080", "#A9A9A9", "#C0C0C0", "#D3D3D3", "#DCDCDC", "#F5F5F5", "#FFFFFF"]
 ]
 
+class State(Enum):
+        WAITING = 1
+        PICKING = 2
+        GUESSING = 3
+        FINISHED = 4
+
 class Player(BaseModel):
     name: str
     
@@ -53,7 +60,7 @@ class Game(BaseModel):
     target_color: Optional[tuple] = None
     current_player: Optional[str] = None
     guesses: List[dict] = []
-    status: str = "waiting"  # waiting, playing, finished
+    status: State = State.WAITING  # waiting, playing, finished
 
 class Guess(BaseModel):
     player_id: str
@@ -86,7 +93,7 @@ def create_game(player: Player):
         "current_player": None,
         "guesses": [],
         "clues": [],
-        "status": "waiting",
+        "status": State.WAITING,
         "scores": {player_id: 0}
     }
     
@@ -141,7 +148,7 @@ def start_game(game_id: str, player_id: str):
     
     # Pick random starting player
     game["current_player"] = random.choice(game["players"])["id"]
-    game["status"] = "playing"
+    game["status"] = State.GUESSING
     
     return {"message": "Game started", "current_player": game["current_player"]}
 
@@ -197,7 +204,7 @@ def make_guess(game_id: str, guess: Guess):
     
     game = games[game_id]
     
-    if game["status"] != "playing":
+    if game["status"] != State.GUESSING:
         raise HTTPException(status_code=400, detail="Game is not in playing state")
     
     row, col = guess.color_position
@@ -238,4 +245,4 @@ def get_colors():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
