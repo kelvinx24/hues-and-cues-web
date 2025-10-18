@@ -54,6 +54,8 @@ class Game(BaseModel):
     current_player: Optional[str] = None
     guesses: List[dict] = []
     status: str = "waiting"  # waiting, playing, finished
+    phase: str = "hinting"  # hinting, guessing, end_round
+    guessing_timer_start: Optional[float] = None
 
 class Guess(BaseModel):
     player_id: str
@@ -87,7 +89,10 @@ def create_game(player: Player):
         "guesses": [],
         "clues": [],
         "status": "waiting",
-        "scores": {player_id: 0}
+        "scores": {player_id: 0},
+        "phase": "hinting",
+        "guessing_timer_start": None,
+        "players_who_guessed": []
     }
     
     return {
@@ -142,6 +147,9 @@ def start_game(game_id: str, player_id: str):
     # Pick random starting player
     game["current_player"] = random.choice(game["players"])["id"]
     game["status"] = "playing"
+    game["phase"] = "hinting"
+    game["guessing_timer_start"] = None
+    game["players_who_guessed"] = []
     
     return {"message": "Game started", "current_player": game["current_player"]}
 
@@ -161,7 +169,10 @@ def get_game(game_id: str, player_id: str):
         "guesses": game["guesses"],
         "clues": game["clues"],
         "status": game["status"],
-        "scores": game["scores"]
+        "scores": game["scores"],
+        "phase": game.get("phase", "hinting"),
+        "guessing_timer_start": game.get("guessing_timer_start"),
+        "players_who_guessed": game.get("players_who_guessed", [])
     }
     
     # Only show target color to current player
@@ -173,6 +184,8 @@ def get_game(game_id: str, player_id: str):
 @app.post("/game/{game_id}/clue")
 def give_clue(game_id: str, clue: Clue):
     """Current player gives a clue"""
+    import time
+    
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
     
@@ -181,17 +194,28 @@ def give_clue(game_id: str, clue: Clue):
     if clue.player_id != game["current_player"]:
         raise HTTPException(status_code=403, detail="Not your turn")
     
+    # Only allow clues during hinting phase
+    if game.get("phase") != "hinting":
+        raise HTTPException(status_code=400, detail="Can only give clues during hinting phase")
+    
     game["clues"].append({
         "player_id": clue.player_id,
         "player_name": players[clue.player_id]["name"],
         "clue_text": clue.clue_text
     })
     
-    return {"message": "Clue added"}
+    # Transition to guessing phase
+    game["phase"] = "guessing"
+    game["guessing_timer_start"] = time.time()
+    game["players_who_guessed"] = []
+    
+    return {"message": "Clue added, entering guessing phase"}
 
 @app.post("/game/{game_id}/guess")
 def make_guess(game_id: str, guess: Guess):
     """Make a guess for the target color"""
+    import time
+    
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
     
@@ -199,6 +223,18 @@ def make_guess(game_id: str, guess: Guess):
     
     if game["status"] != "playing":
         raise HTTPException(status_code=400, detail="Game is not in playing state")
+    
+    # Only allow guesses during guessing phase
+    if game.get("phase") != "guessing":
+        raise HTTPException(status_code=400, detail="Can only guess during guessing phase")
+    
+    # Current player cannot guess
+    if guess.player_id == game["current_player"]:
+        raise HTTPException(status_code=403, detail="Current player cannot guess")
+    
+    # Check if player already guessed this round
+    if guess.player_id in game.get("players_who_guessed", []):
+        raise HTTPException(status_code=400, detail="You have already guessed this round")
     
     row, col = guess.color_position
     target_row, target_col = game["target_color"]
@@ -214,41 +250,113 @@ def make_guess(game_id: str, guess: Guess):
         "correct": distance == 0
     })
     
-    # If correct, award points and start new round
-    if distance == 0:
-        game["scores"][guess.player_id] += 5
-        game["scores"][game["current_player"]] += 3
-        
-        # Start a new round with a new color and next player
-        current_player_index = next(
-            (i for i, p in enumerate(game["players"]) if p["id"] == game["current_player"]),
-            0
-        )
-        next_player_index = (current_player_index + 1) % len(game["players"])
-        game["current_player"] = game["players"][next_player_index]["id"]
-        
-        # Pick new target color
-        row = random.randint(0, len(COLORS) - 1)
-        col = random.randint(0, len(COLORS[0]) - 1)
-        game["target_color"] = (row, col)
-        
-        # Clear guesses and clues for new round
-        game["guesses"] = []
-        game["clues"] = []
-        
-        return {
-            "correct": True,
-            "message": "Correct guess!",
-            "distance": distance,
-            "target_color": (target_row, target_col),
-            "new_round": True,
-            "next_player": game["current_player"]
-        }
+    # Mark player as having guessed
+    if "players_who_guessed" not in game:
+        game["players_who_guessed"] = []
+    game["players_who_guessed"].append(guess.player_id)
+    
+    # Check if all other players have guessed (excluding current player)
+    other_players = [p["id"] for p in game["players"] if p["id"] != game["current_player"]]
+    all_guessed = all(p_id in game["players_who_guessed"] for p_id in other_players)
+    
+    # Check if timer has expired (60 seconds)
+    timer_expired = False
+    if game.get("guessing_timer_start"):
+        elapsed = time.time() - game["guessing_timer_start"]
+        timer_expired = elapsed >= 60
+    
+    # If all players guessed or timer expired, transition to end_round phase
+    if all_guessed or timer_expired:
+        game["phase"] = "end_round"
     
     return {
-        "correct": False,
+        "correct": distance == 0,
         "distance": distance,
-        "message": f"Distance: {distance}"
+        "message": f"Distance: {distance}" if distance > 0 else "Correct!",
+        "phase": game["phase"]
+    }
+
+@app.post("/game/{game_id}/continue_round")
+def continue_round(game_id: str, player_id: str):
+    """Current player continues the round with another hint"""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    game = games[game_id]
+    
+    if player_id != game["current_player"]:
+        raise HTTPException(status_code=403, detail="Only current player can continue round")
+    
+    if game.get("phase") != "end_round":
+        raise HTTPException(status_code=400, detail="Can only continue during end_round phase")
+    
+    # Transition back to hinting phase
+    game["phase"] = "hinting"
+    game["guessing_timer_start"] = None
+    game["players_who_guessed"] = []
+    
+    return {"message": "Round continues, you can give another hint"}
+
+@app.post("/game/{game_id}/end_round")
+def end_round(game_id: str, player_id: str):
+    """Current player ends the round, scores and starts new round"""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    game = games[game_id]
+    
+    if player_id != game["current_player"]:
+        raise HTTPException(status_code=403, detail="Only current player can end round")
+    
+    if game.get("phase") != "end_round":
+        raise HTTPException(status_code=400, detail="Can only end round during end_round phase")
+    
+    target_row, target_col = game["target_color"]
+    
+    # Score the guesses - award points for closest guesses
+    if game["guesses"]:
+        # Sort guesses by distance
+        sorted_guesses = sorted(game["guesses"], key=lambda g: g["distance"])
+        
+        # Award points based on accuracy
+        for i, g in enumerate(sorted_guesses[:3]):  # Top 3 guesses
+            if g["distance"] == 0:
+                game["scores"][g["player_id"]] += 5
+                game["scores"][game["current_player"]] += 3
+            elif i == 0 and g["distance"] <= 2:  # Closest guess within 2
+                game["scores"][g["player_id"]] += 3
+            elif i == 1 and g["distance"] <= 3:  # Second closest within 3
+                game["scores"][g["player_id"]] += 1
+    
+    # Move to next player
+    current_player_index = next(
+        (i for i, p in enumerate(game["players"]) if p["id"] == game["current_player"]),
+        0
+    )
+    next_player_index = (current_player_index + 1) % len(game["players"])
+    previous_player = game["current_player"]
+    game["current_player"] = game["players"][next_player_index]["id"]
+    
+    # Pick new target color
+    row = random.randint(0, len(COLORS) - 1)
+    col = random.randint(0, len(COLORS[0]) - 1)
+    previous_color = game["target_color"]
+    game["target_color"] = (row, col)
+    
+    # Clear guesses and clues for new round
+    game["guesses"] = []
+    game["clues"] = []
+    game["players_who_guessed"] = []
+    
+    # Reset to hinting phase
+    game["phase"] = "hinting"
+    game["guessing_timer_start"] = None
+    
+    return {
+        "message": "Round ended, starting new round",
+        "previous_color": previous_color,
+        "previous_player": previous_player,
+        "current_player": game["current_player"]
     }
 
 @app.get("/colors")
