@@ -1,11 +1,15 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import random
 import uuid
+from enum import Enum
+import json
+from connection_manager import ConnectionManager
 
 app = FastAPI(title="Hues and Cues Game API")
+manager = ConnectionManager()
 
 # CORS middleware to allow frontend to connect
 app.add_middleware(
@@ -15,10 +19,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Game state storage (in-memory for simplicity)
-games: Dict[str, dict] = {}
-players: Dict[str, dict] = {}
 
 # Color board - 480 colors in a grid
 COLORS = [
@@ -44,16 +44,36 @@ COLORS = [
     ["#000000", "#2F4F4F", "#696969", "#808080", "#A9A9A9", "#C0C0C0", "#D3D3D3", "#DCDCDC", "#F5F5F5", "#FFFFFF"]
 ]
 
+# Game state storage (in-memory for simplicity)
+games: Dict[str, dict] = {}
+players: Dict[str, dict] = {}
+connections: Dict[str, list] = {}
+
+
+class State(Enum):
+    WAITING = "waiting"
+    PLAYING = "playing"
+    FINISHED = "finished"
+
+class Phase(Enum):
+    HINTING = "hinting"
+    GUESSING = "guessing"
+    CHOICE = "choosing"
+    ENDROUND = "ending"
+
 class Player(BaseModel):
     name: str
     
 class Game(BaseModel):
     game_id: str
     players: List[dict]
+    lobby_leader: str = None
     target_color: Optional[tuple] = None
     current_player: Optional[str] = None
+    player_last_guess:  Dict = {}
     guesses: List[dict] = []
-    status: str = "waiting"  # waiting, playing, finished
+    status: State = State.WAITING
+    phase: Phase = Phase.HINTING
 
 class Guess(BaseModel):
     player_id: str
@@ -66,6 +86,39 @@ class Clue(BaseModel):
 @app.get("/")
 def read_root():
     return {"message": "Hues and Cues Game API", "status": "running"}
+
+
+async def broadcast_to_game(game_id: str, message: dict):
+    if game_id in connections:
+        living_connections = []
+        for ws in connections[game_id]:
+            try:
+                await ws.send_json(message)
+                living_connections.append(ws)
+            except Exception:
+                # client probably disconnected
+                continue
+        connections[game_id] = living_connections
+
+
+@app.websocket("/ws/{game_id}/{player_id}")
+async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str):
+    await websocket.accept()
+    print(f"🔌 {player_id} connected to game {game_id}")
+
+    if game_id not in connections:
+        connections[game_id] = []
+    connections[game_id].append(websocket)
+
+    try:
+        while True:
+            # We can listen if players send messages too
+            data = await websocket.receive_text()
+            print(f"Received from {player_id}: {data}")
+    except WebSocketDisconnect:
+        print(f"❌ {player_id} disconnected from game {game_id}")
+        connections[game_id].remove(websocket)
+
 
 @app.post("/game/create")
 def create_game(player: Player):
@@ -82,12 +135,15 @@ def create_game(player: Player):
     games[game_id] = {
         "game_id": game_id,
         "players": [players[player_id]],
+        "lobby_leader": player_id,
         "target_color": None,
         "current_player": None,
         "guesses": [],
         "clues": [],
-        "status": "waiting",
-        "scores": {player_id: 0}
+        "status": State.WAITING,
+        "phase": Phase.HINTING,
+        "scores": {player_id: 0},
+        "player_last_guess": {}
     }
     
     return {
@@ -123,16 +179,21 @@ def join_game(game_id: str, player: Player):
         "player_name": player.name
     }
 
+
+    
 @app.post("/game/{game_id}/start")
-def start_game(game_id: str, player_id: str):
+async def start_game(game_id: str, player_id: str, background_tasks: BackgroundTasks = None):
     """Start the game"""
     if game_id not in games:
         raise HTTPException(status_code=404, detail="Game not found")
     
     game = games[game_id]
-    
     if len(game["players"]) < 2:
         raise HTTPException(status_code=400, detail="Need at least 2 players")
+    if game["lobby_leader"] != player_id:
+        raise HTTPException(status_code=400, detail="Only lobby leader can start")
+    if game["status"] != State.WAITING:
+        raise HTTPException(status_code=403, detail="Game in progress")
     
     # Pick random target color
     row = random.randint(0, len(COLORS) - 1)
@@ -141,9 +202,26 @@ def start_game(game_id: str, player_id: str):
     
     # Pick random starting player
     game["current_player"] = random.choice(game["players"])["id"]
-    game["status"] = "playing"
+    game["status"] = State.PLAYING
+    game["phase"] = Phase.HINTING  # ✅ ensure phase is set
     
-    return {"message": "Game started", "current_player": game["current_player"]}
+    # Broadcast game start to everyone
+    if background_tasks is not None:
+        background_tasks.add_task(
+            broadcast_to_game,
+            game_id,
+            {
+                "type": "game_phase_changed",
+                "status": game["status"].value,
+                "phase": game["phase"].value,
+                "current_player": game["current_player"],
+                "target_color": game["target_color"],
+            }
+        )
+    
+    startMes = {"message": "Game started", "current_player": game["current_player"]}
+    
+    return startMes
 
 @app.get("/game/{game_id}")
 def get_game(game_id: str, player_id: str):
@@ -161,7 +239,9 @@ def get_game(game_id: str, player_id: str):
         "guesses": game["guesses"],
         "clues": game["clues"],
         "status": game["status"],
-        "scores": game["scores"]
+        "scores": game["scores"],
+        "phase": game["phase"],
+        "last_guesses": game["player_last_guess"]
     }
     
     # Only show target color to current player
@@ -181,13 +261,97 @@ def give_clue(game_id: str, clue: Clue):
     if clue.player_id != game["current_player"]:
         raise HTTPException(status_code=403, detail="Not your turn")
     
+    if game["status"] != State.PLAYING:
+        raise HTTPException(status_code=400, detail="Game is not in playing state")
+    
+    if game["phase"] != Phase.HINTING:
+        raise HTTPException(status_code=403, detail="Not hinting phase")
+    
+    
     game["clues"].append({
         "player_id": clue.player_id,
         "player_name": players[clue.player_id]["name"],
         "clue_text": clue.clue_text
     })
+
+    game["phase"] = Phase.GUESSING
+
     
     return {"message": "Clue added"}
+
+@app.post("/game/{game_id}/continue_round")
+def continue_round(game_id: str, player_id: str):
+    """Make a choice after guessing phase"""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    game = games[game_id]
+    
+    if game["phase"] != Phase.CHOICE:
+        raise HTTPException(status_code=400, detail="Game is not in playing state")
+    
+    if player_id != game["current_player"]:
+        raise HTTPException(status_code=403, detail="Not your turn")
+    
+    game["phase"] = Phase.HINTING
+
+    return {"message": "Round continues, give another hint"}
+
+@app.post("/game/{game_id}/end_round")
+def end_round(game_id: str, player_id: str):
+    """Make a choice after guessing phase"""
+    if game_id not in games:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    game = games[game_id]
+    
+    if player_id != game["current_player"]:
+        raise HTTPException(status_code=403, detail="Not your turn")
+    
+    if game["status"] != State.PLAYING:
+        raise HTTPException(status_code=400, detail="Game is not in playing state")
+    
+    if game["phase"] != Phase.CHOICE:
+        raise HTTPException(status_code=403, detail="Not hinting phase")
+    
+    game = games[game_id]
+
+    # Score players
+    for player, distance in game["player_last_guess"].items():
+        game["scores"][player] += distance
+
+
+    game["scores"][game["current_player"]] += 3
+    
+    # Start a new round with a new color and next player
+    current_player_index = next(
+        (i for i, p in enumerate(game["players"]) if p["id"] == game["current_player"]),
+        0
+    )
+
+    next_player_index = (current_player_index + 1) % len(game["players"])
+    game["current_player"] = game["players"][next_player_index]["id"]
+
+    prev_row, prev_col = game["target_color"]
+    
+    # Pick new target color
+    row = random.randint(0, len(COLORS) - 1)
+    col = random.randint(0, len(COLORS[0]) - 1)
+    game["target_color"] = (row, col)
+    
+    # Clear guesses and clues for new round
+    game["guesses"] = []
+    game["clues"] = []
+    game["player_last_guess"] = {}
+    game["phase"] = Phase.ENDROUND
+
+    return {
+        "message": "End Round!",
+        "target_color": (prev_row, prev_col),
+        "next_player": game["current_player"]
+    }
+
+
 
 @app.post("/game/{game_id}/guess")
 def make_guess(game_id: str, guess: Guess):
@@ -197,7 +361,7 @@ def make_guess(game_id: str, guess: Guess):
     
     game = games[game_id]
     
-    if game["status"] != "playing":
+    if game["phase"] != Phase.GUESSING:
         raise HTTPException(status_code=400, detail="Game is not in playing state")
     
     row, col = guess.color_position
@@ -205,7 +369,7 @@ def make_guess(game_id: str, guess: Guess):
     
     # Calculate distance from target
     distance = abs(row - target_row) + abs(col - target_col)
-    
+
     game["guesses"].append({
         "player_id": guess.player_id,
         "player_name": players[guess.player_id]["name"],
@@ -213,42 +377,16 @@ def make_guess(game_id: str, guess: Guess):
         "distance": distance,
         "correct": distance == 0
     })
-    
-    # If correct, award points and start new round
-    if distance == 0:
-        game["scores"][guess.player_id] += 5
-        game["scores"][game["current_player"]] += 3
-        
-        # Start a new round with a new color and next player
-        current_player_index = next(
-            (i for i, p in enumerate(game["players"]) if p["id"] == game["current_player"]),
-            0
-        )
-        next_player_index = (current_player_index + 1) % len(game["players"])
-        game["current_player"] = game["players"][next_player_index]["id"]
-        
-        # Pick new target color
-        row = random.randint(0, len(COLORS) - 1)
-        col = random.randint(0, len(COLORS[0]) - 1)
-        game["target_color"] = (row, col)
-        
-        # Clear guesses and clues for new round
-        game["guesses"] = []
-        game["clues"] = []
-        
-        return {
-            "correct": True,
-            "message": "Correct guess!",
-            "distance": distance,
-            "target_color": (target_row, target_col),
-            "new_round": True,
-            "next_player": game["current_player"]
-        }
-    
+
+    game["player_last_guess"][guess.player_id] = distance
+
+    if len(game["player_last_guess"]) == len(game["players"]) - 1:
+        game["phase"] = Phase.CHOICE
+
     return {
-        "correct": False,
-        "distance": distance,
-        "message": f"Distance: {distance}"
+        "phase": game["phase"].value,
+        "guess_entered": True,
+        "position": guess.color_position
     }
 
 @app.get("/colors")
@@ -256,6 +394,9 @@ def get_colors():
     """Get the color board"""
     return {"colors": COLORS}
 
+
+
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
