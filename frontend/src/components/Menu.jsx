@@ -12,7 +12,7 @@ export default function Menu({ onJoinOrCreate }) {
   };
 
   const handleJoin = () => {
-    if (!name.trim() || !joinId.trim()) return alert("Enter both name and game ID!");
+    if (!name.trim() || !joinId.trim()) return alert("Enter both name and session ID!");
     onJoinOrCreate(name, joinId); // join existing game
   };
 

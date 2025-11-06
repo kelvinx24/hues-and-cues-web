@@ -1,37 +1,67 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useSocket } from "../context/WebSocketContext";
 import useGameSocket from "../hooks/useGameSocket";
 
 
-export default function Lobby({ gameId, playerId, onStart, onLeave }) {
+export default function Lobby({ sessionId, playerId, onStart, onLeave }) {
   const { messages, sendMessage, connected } = useSocket();
+  const [sessionData, setSessionData] = useState(null);
 
   const startGame = async () => {
-    await fetch(`http://localhost:8001/game/${gameId}/start?player_id=${playerId}`, {
+    await fetch(`http://localhost:8001/session/${sessionId}/start?player_id=${playerId}`, {
       method: "POST",
     });
-    onStart();
   };
 
   useEffect(() => {
     if (messages.length === 0) return;
     const msg = messages[messages.length - 1];
 
-    if (msg.type === "player_joined") {
+    if (msg.event === "player_joined") {
       // Add player to list
-
-    } else if (msg.type === "game_phase_changed") {
+      setSessionData(msg.data)
+      
+    } else if (msg.event === "game_start") {
       // Game started — move to playing state
       onStart();
     }
   }, [messages]);
 
   return (
-    <div>
-      <h2>Lobby for {gameId}</h2>
-      <p>Connection: {connected ? "🟢 Connected" : "🔴 Disconnected"}</p>
-      <button onClick={startGame}>Start Game</button>
-      <button onClick={onLeave}>Leave Lobby</button>
+    <div className="lobby-container">
+      <h1>Game Lobby</h1>
+      
+      <div className="session-info">
+        <p className="session-id">Session ID: <strong>{sessionId}</strong></p>
+        <p className="share-text">Share this ID with friends to join!</p>
+      </div>
+      
+      <div className="players-section">
+        <h2>Players ({sessionData?.players?.length || 0})</h2>
+        <div className="players-list">
+          {sessionData?.players?.map((player, index) => (
+            <div key={player.player_id} className="player-card">
+              <span className="player-number">{index + 1}</span>
+              <span className="player-name">{player.name}</span>
+              {player.id === playerId && <span className="you-badge">YOU</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+      
+      <button 
+        onClick={startGame} 
+        className="btn btn-primary"
+        disabled={!sessionData || sessionData.players?.length < 2}
+      >
+        Start Game
+      </button>
+      
+      <button onClick={onLeave} className="btn btn-secondary">
+        Leave Game
+      </button>
     </div>
   );
+
+   
 }

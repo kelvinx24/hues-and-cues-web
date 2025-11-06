@@ -2,15 +2,17 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 
 const SocketContext = createContext(null);
 
-export const SocketProvider = ({ gameId, playerId, children }) => {
+export const SocketProvider = ({ sessionId, playerId, children }) => {
   const [messages, setMessages] = useState([]);
   const [connected, setConnected] = useState(false);
   const socketRef = useRef(null);
 
   useEffect(() => {
-    if (!gameId || !playerId) return; // Don't connect if not in game
+    console.log("Socket effect triggered with:", { sessionId, playerId });
+    if (!sessionId || !playerId || socketRef.current) return; // Don't connect if not in game
 
-    const ws = new WebSocket(`ws://localhost:8001/ws/${gameId}/${playerId}`);
+    const ws = new WebSocket(`ws://localhost:8001/ws/${sessionId}/${playerId}`);
+    
     socketRef.current = ws;
 
     ws.onopen = () => {
@@ -18,7 +20,7 @@ export const SocketProvider = ({ gameId, playerId, children }) => {
       setConnected(true);
 
     };
-      ;
+      
     ws.onclose = () => console.log("❌ WebSocket disconnected");
     ws.onerror = (err) => console.error("WebSocket error:", err);
 
@@ -33,7 +35,7 @@ export const SocketProvider = ({ gameId, playerId, children }) => {
       ws.close();
       socketRef.current = null;
     };
-  }, [gameId, playerId]);
+  }, [sessionId, playerId]);
 
   // Send helper
   const sendMessage = (data) => {

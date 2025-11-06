@@ -1,12 +1,15 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, Body, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import Annotated, List, Optional, Dict
 import random
 import uuid
-from enum import Enum
+
 import json
 from connection_manager import ConnectionManager
+
+from player import Player
+from game import State, Phase, Game
 
 app = FastAPI(title="Hues and Cues Game API")
 manager = ConnectionManager()
@@ -44,36 +47,18 @@ COLORS = [
     ["#000000", "#2F4F4F", "#696969", "#808080", "#A9A9A9", "#C0C0C0", "#D3D3D3", "#DCDCDC", "#F5F5F5", "#FFFFFF"]
 ]
 
-# Game state storage (in-memory for simplicity)
-games: Dict[str, dict] = {}
-players: Dict[str, dict] = {}
-connections: Dict[str, list] = {}
 
-
-class State(Enum):
-    WAITING = "waiting"
-    PLAYING = "playing"
-    FINISHED = "finished"
-
-class Phase(Enum):
-    HINTING = "hinting"
-    GUESSING = "guessing"
-    CHOICE = "choosing"
-    ENDROUND = "ending"
-
-class Player(BaseModel):
+class CreateJoinSessionRequest(BaseModel):
     name: str
-    
-class Game(BaseModel):
-    game_id: str
-    players: List[dict]
-    lobby_leader: str = None
-    target_color: Optional[tuple] = None
-    current_player: Optional[str] = None
-    player_last_guess:  Dict = {}
-    guesses: List[dict] = []
-    status: State = State.WAITING
-    phase: Phase = Phase.HINTING
+
+class Session(BaseModel):
+    session_id: str
+    leader: Player
+    players: List[Player] = []
+    current_game: Optional[Game] = None
+
+    def active_game(self):
+        return self.current_game != None
 
 class Guess(BaseModel):
     player_id: str
@@ -83,32 +68,92 @@ class Clue(BaseModel):
     player_id: str
     clue_text: str
 
+# Game state storage (in-memory for simplicity)
+sessions: Dict[str, Session] = {}
+players: Dict[str, Player] = {}
+session_connections: Dict[str, List[WebSocket]] = {}
+player_connections: Dict[str, WebSocket] = {}
+
 @app.get("/")
 def read_root():
     return {"message": "Hues and Cues Game API", "status": "running"}
 
 
-async def broadcast_to_game(game_id: str, message: dict):
-    if game_id in connections:
+async def broadcast_to_player(player_id: str, message: dict):
+    if player_id in player_connections:
+        ws = player_connections[player_id]
+        try:
+            await ws.send_json(message)
+        except Exception as e:
+            print(e)
+            print("Could not send to player with id " + player_id)
+
+async def broadcast_to_game(session_id: str, message: dict):
+
+    if session_id in session_connections:
         living_connections = []
-        for ws in connections[game_id]:
+        for ws in session_connections[session_id]:
             try:
                 await ws.send_json(message)
                 living_connections.append(ws)
             except Exception:
                 # client probably disconnected
                 continue
-        connections[game_id] = living_connections
+        session_connections[session_id] = living_connections
+
+async def broadcast_to_rest(session_id: str, message: dict):
+    if session_id not in session_connections:
+        return
+    
+    session = sessions[session_id]
+    game = session.current_game
+    if game is not None:
+        for player in session.players:
+            if player.player_id == game.current_player:
+                continue
+
+            await broadcast_to_player(player.player_id, message)
+
+async def broadcast_to_current_player(session_id: str, message: dict):
+    if session_id not in session_connections:
+        return
+    
+    session = sessions[session_id]
+    game = session.current_game
+    if game is not None:
+        await broadcast_to_player(game.current_player, message)
+                
 
 
-@app.websocket("/ws/{game_id}/{player_id}")
-async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str):
+
+@app.websocket("/ws/{session_id}/{player_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: str):
+    print("Active sessions:", list(sessions.keys()))
+    print("Active players:", list(players.keys()))
+    if session_id not in sessions or player_id not in players:
+        await websocket.close(code=1008)
+        print(f"Invalid session {session_id} or player {player_id}")
+        return
+
+
     await websocket.accept()
-    print(f"🔌 {player_id} connected to game {game_id}")
 
-    if game_id not in connections:
-        connections[game_id] = []
-    connections[game_id].append(websocket)
+    print(f"🔌 {player_id} connected to game {session_id}")
+    if session_id not in session_connections:
+        session_connections[session_id] = []
+
+    
+    session_connections[session_id].append(websocket)
+    player_connections[player_id] = websocket
+
+    print("Active session connections:", len(session_connections[session_id]))
+    await broadcast_to_game(
+        session_id,
+        {
+            "event": "player_joined",
+            "data": sessions[session_id].model_dump(),
+        },
+    )
 
     try:
         while True:
@@ -116,112 +161,111 @@ async def websocket_endpoint(websocket: WebSocket, game_id: str, player_id: str)
             data = await websocket.receive_text()
             print(f"Received from {player_id}: {data}")
     except WebSocketDisconnect:
-        print(f"❌ {player_id} disconnected from game {game_id}")
-        connections[game_id].remove(websocket)
+        print(f"❌ {player_id} disconnected from game {session_id}")
 
 
-@app.post("/game/create")
-def create_game(player: Player):
+@app.post("/session/create")
+def create_session(entered_name: CreateJoinSessionRequest):
     """Create a new game room"""
-    game_id = str(uuid.uuid4())[:8]
-    player_id = str(uuid.uuid4())[:8]
+    new_session_id = str(uuid.uuid4())[:8]
+    new_player_id = str(uuid.uuid4())[:8]
+    player = Player(
+        player_id = new_player_id,
+        name = entered_name.name,
+    )
     
-    players[player_id] = {
-        "id": player_id,
-        "name": player.name,
-        "game_id": game_id
-    }
-    
-    games[game_id] = {
-        "game_id": game_id,
-        "players": [players[player_id]],
-        "lobby_leader": player_id,
-        "target_color": None,
-        "current_player": None,
-        "guesses": [],
-        "clues": [],
-        "status": State.WAITING,
-        "phase": Phase.HINTING,
-        "scores": {player_id: 0},
-        "player_last_guess": {}
-    }
-    
-    return {
-        "game_id": game_id,
-        "player_id": player_id,
-        "player_name": player.name
-    }
+    players[new_player_id] = player
 
-@app.post("/game/{game_id}/join")
-def join_game(game_id: str, player: Player):
+    new_session = Session(
+        session_id = new_session_id,
+        leader = player
+    )
+    new_session.players.append(player)
+    
+    sessions[new_session_id] = new_session
+    response = dict(new_session.model_dump())
+    response["you"] = new_player_id
+    print(f"Created session {new_session_id} with player {new_player_id}")
+
+    return response
+
+@app.post("/session/{session_id}/join")
+def join_game(session_id: str, entered_name: CreateJoinSessionRequest):
     """Join an existing game"""
-    if game_id not in games:
+    if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    game = games[game_id]
+    session = sessions[session_id]
     
-    if len(game["players"]) >= 10:
+    if len(session.players) >= 10:
         raise HTTPException(status_code=400, detail="Game is full")
     
-    player_id = str(uuid.uuid4())[:8]
-    players[player_id] = {
-        "id": player_id,
-        "name": player.name,
-        "game_id": game_id
-    }
+    new_player_id = str(uuid.uuid4())[:8]
+    player = Player(
+        player_id = new_player_id,
+        name = entered_name.name,
+    )
     
-    game["players"].append(players[player_id])
-    game["scores"][player_id] = 0
+    session.players.append(player)
+    players[new_player_id] = player
+    response = dict(session.model_dump())
+    response['you'] = new_player_id
     
-    return {
-        "game_id": game_id,
-        "player_id": player_id,
-        "player_name": player.name
-    }
+    return response
 
 
     
-@app.post("/game/{game_id}/start")
-async def start_game(game_id: str, player_id: str, background_tasks: BackgroundTasks = None):
+@app.post("/session/{session_id}/start")
+async def start_game(session_id: str, player_id: str):
     """Start the game"""
-    if game_id not in games:
+    if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Game not found")
     
-    game = games[game_id]
-    if len(game["players"]) < 2:
+    session = sessions[session_id]
+    if len(session.players) < 2:
         raise HTTPException(status_code=400, detail="Need at least 2 players")
-    if game["lobby_leader"] != player_id:
+    if session.leader.player_id != player_id:
         raise HTTPException(status_code=400, detail="Only lobby leader can start")
-    if game["status"] != State.WAITING:
+    if session.active_game() != False:
         raise HTTPException(status_code=403, detail="Game in progress")
     
+    # Create Game
     # Pick random target color
     row = random.randint(0, len(COLORS) - 1)
     col = random.randint(0, len(COLORS[0]) - 1)
-    game["target_color"] = (row, col)
+    random_color = (row, col)
     
     # Pick random starting player
-    game["current_player"] = random.choice(game["players"])["id"]
-    game["status"] = State.PLAYING
-    game["phase"] = Phase.HINTING  # ✅ ensure phase is set
+    random_player = random.choice(session.players).player_id
+
+    new_game_id = str(uuid.uuid4())[:8]
+
+    game = Game(
+        game_id=new_game_id,
+        players=session.players,
+        target_color=random_color,
+        current_player=random_player
+    )
+
+    session.current_game = game
     
     # Broadcast game start to everyone
-    if background_tasks is not None:
-        background_tasks.add_task(
-            broadcast_to_game,
-            game_id,
-            {
-                "type": "game_phase_changed",
-                "status": game["status"].value,
-                "phase": game["phase"].value,
-                "current_player": game["current_player"],
-                "target_color": game["target_color"],
-            }
-        )
-    
-    startMes = {"message": "Game started", "current_player": game["current_player"]}
-    
-    return startMes
+    await broadcast_to_rest(
+        session_id, 
+        {
+            "event": "game_start",
+            "data": game.model_dump(exclude='target_color')
+        } 
+    )   
+
+    await broadcast_to_current_player(
+        session_id, 
+        {
+            "event": "game_start",
+            "data": game.model_dump()
+        }
+    )
+    return {"status": "success", "message": "game created"}
 
 @app.get("/game/{game_id}")
 def get_game(game_id: str, player_id: str):
