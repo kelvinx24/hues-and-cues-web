@@ -51,6 +51,9 @@ COLORS = [
 class CreateJoinSessionRequest(BaseModel):
     name: str
 
+class LeaveSessionRequest(BaseModel):
+    player_id: str
+
 class Session(BaseModel):
     session_id: str
     leader: Player
@@ -213,6 +216,34 @@ def join_game(session_id: str, entered_name: CreateJoinSessionRequest):
     
     return response
 
+@app.post("/session/{session_id}/leave")
+async def leave_game(session_id: str, leaveReq: LeaveSessionRequest):
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    session = sessions[session_id]
+
+    player_id = leaveReq.player_id
+    if player_id not in players:
+        raise HTTPException(status_code=404, detail="Player not found")
+    
+    player = players[player_id]
+
+    session.players.remove(player)
+
+    if player_id in player_connections:
+        ws = player_connections.pop(player_id)
+        await ws.close()
+    
+    await broadcast_to_game(
+        session_id,
+        {
+            "event": "player_left",
+            "data": session.model_dump(),
+        },
+    )
+    
+    return {"status": "success", "message": "game left"}
 
     
 @app.post("/session/{session_id}/start")

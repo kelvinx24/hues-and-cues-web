@@ -28,10 +28,10 @@ function App() {
 
   const handleStartGame = () => setView("game");
   const handleLeave = async () => {
-    const res = await fetch(`http://localhost:8001/${sessionId}/${playerId}/leave`, {
+    const res = await fetch(`http://localhost:8001/session/${sessionId}/leave`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ }),
+      body: JSON.stringify({'player_id':playerId}),
     });
 
     setSessionId(null);

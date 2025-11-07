@@ -17,7 +17,7 @@ export default function Lobby({ sessionId, playerId, onStart, onLeave }) {
     if (messages.length === 0) return;
     const msg = messages[messages.length - 1];
 
-    if (msg.event === "player_joined") {
+    if (msg.event === "player_joined" || msg.event === "player_left") {
       // Add player to list
       setSessionData(msg.data)
       
