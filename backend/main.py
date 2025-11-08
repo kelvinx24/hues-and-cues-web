@@ -6,13 +6,12 @@ import random
 import uuid
 
 import json
-from connection_manager import ConnectionManager
+from connection_manager import manager
 
 from player import Player
 from game import State, Phase, Game
 
 app = FastAPI(title="Hues and Cues Game API")
-manager = ConnectionManager()
 
 # CORS middleware to allow frontend to connect
 app.add_middleware(
@@ -74,38 +73,13 @@ class Clue(BaseModel):
 # Game state storage (in-memory for simplicity)
 sessions: Dict[str, Session] = {}
 players: Dict[str, Player] = {}
-session_connections: Dict[str, List[WebSocket]] = {}
-player_connections: Dict[str, WebSocket] = {}
 
 @app.get("/")
 def read_root():
     return {"message": "Hues and Cues Game API", "status": "running"}
 
-
-async def broadcast_to_player(player_id: str, message: dict):
-    if player_id in player_connections:
-        ws = player_connections[player_id]
-        try:
-            await ws.send_json(message)
-        except Exception as e:
-            print(e)
-            print("Could not send to player with id " + player_id)
-
-async def broadcast_to_game(session_id: str, message: dict):
-
-    if session_id in session_connections:
-        living_connections = []
-        for ws in session_connections[session_id]:
-            try:
-                await ws.send_json(message)
-                living_connections.append(ws)
-            except Exception:
-                # client probably disconnected
-                continue
-        session_connections[session_id] = living_connections
-
 async def broadcast_to_rest(session_id: str, message: dict):
-    if session_id not in session_connections:
+    if session_id not in sessions:
         return
     
     session = sessions[session_id]
@@ -115,16 +89,16 @@ async def broadcast_to_rest(session_id: str, message: dict):
             if player.player_id == game.current_player:
                 continue
 
-            await broadcast_to_player(player.player_id, message)
+            await manager.broadcast_to_player(player.player_id, message)
 
 async def broadcast_to_current_player(session_id: str, message: dict):
-    if session_id not in session_connections:
+    if session_id not in sessions:
         return
     
     session = sessions[session_id]
     game = session.current_game
     if game is not None:
-        await broadcast_to_player(game.current_player, message)
+        await manager.broadcast_to_player(game.current_player, message)
                 
 
 
@@ -137,20 +111,12 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
         await websocket.close(code=1008)
         print(f"Invalid session {session_id} or player {player_id}")
         return
+        
 
 
-    await websocket.accept()
+    await manager.connect(session_id, player_id, websocket)
 
-    print(f"🔌 {player_id} connected to game {session_id}")
-    if session_id not in session_connections:
-        session_connections[session_id] = []
-
-    
-    session_connections[session_id].append(websocket)
-    player_connections[player_id] = websocket
-
-    print("Active session connections:", len(session_connections[session_id]))
-    await broadcast_to_game(
+    await manager.broadcast_to_session(
         session_id,
         {
             "event": "player_joined",
@@ -165,6 +131,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
             print(f"Received from {player_id}: {data}")
     except WebSocketDisconnect:
         print(f"❌ {player_id} disconnected from game {session_id}")
+        await leave_game(session_id, LeaveSessionRequest(player_id=player_id))
+
+    
 
 
 @app.post("/session/create")
@@ -231,11 +200,9 @@ async def leave_game(session_id: str, leaveReq: LeaveSessionRequest):
 
     session.players.remove(player)
 
-    if player_id in player_connections:
-        ws = player_connections.pop(player_id)
-        await ws.close()
+    manager.disconnect(session_id, player_id)
     
-    await broadcast_to_game(
+    await manager.broadcast_to_session(
         session_id,
         {
             "event": "player_left",

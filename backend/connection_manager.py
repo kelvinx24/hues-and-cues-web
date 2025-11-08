@@ -1,33 +1,48 @@
-import logging
-import json
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
-from typing import List
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from typing import Dict, List
+from fastapi import WebSocket, WebSocketDisconnect
 
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
+        self.active_connections: Dict[str, List[WebSocket]] = {}
+        self.player_connections: Dict[str, WebSocket] = {}
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, session_id: str, player_id: str, websocket: WebSocket):
         await websocket.accept()
-        self.active_connections.append(websocket)
-        logger.info(f"Websocket connected. Total connections: {len(self.active_connections)}")
+        print(f"🔌 {player_id} connected to game {session_id}")
+
+        if session_id not in self.active_connections:
+            self.active_connections[session_id] = []
+            
+        self.active_connections[session_id].append(websocket)
+        self.player_connections[player_id] = websocket
 
     
-    def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
-        logger.info(f"Websocket disconnected. Total connections: {len(self.active_connections)}")
 
-    async def broadcast(self, message:dict):
-        disconnected = []
-        for connection in self.active_connections:
+    def disconnect(self, session_id: str, player_id: str):
+        if player_id in self.player_connections:
+            websocket = self.player_connections[player_id]
+
+            if session_id in self.active_connections:
+                self.active_connections[session_id].remove(websocket)
+                if not self.active_connections[session_id]:
+                    del self.active_connections[session_id]
+                
+                del self.player_connections[player_id]
+
+    async def broadcast_to_session(self, session_id: str, message: dict):
+        """Send a message to all sockets in the given game."""
+        if session_id in self.active_connections:
+            for ws in self.active_connections[session_id]:
+                await ws.send_json(message)
+
+    async def broadcast_to_player(self, player_id: str, message: dict):
+        if player_id in self.player_connections:
+            ws = self.player_connections[player_id]
             try:
-                await connection.send_text(json.dumps(message))
+                await ws.send_json(message)
             except Exception as e:
-                logger.error(f"Error sending message to webSocket: {e}")
-                disconnected.append(connection)
 
-        for connection in disconnected:
-            self.active_connections.remove(connection)
+                print("Could not send to player with id " + player_id)
+
+# global instance
+manager = ConnectionManager()
