@@ -240,6 +240,7 @@ async def start_game(session_id: str, player_id: str):
 
     game = Game(
         game_id=new_game_id,
+        session_id=session_id,
         players=session.players,
         target_color=random_color,
         current_player=random_player
