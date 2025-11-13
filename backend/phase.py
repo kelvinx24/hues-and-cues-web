@@ -1,5 +1,6 @@
 import asyncio
 from abc import ABC, abstractmethod
+from pydantic import BaseModel
 from connection_manager import manager
 
 class Phase(ABC):
@@ -37,24 +38,13 @@ class Phase(ABC):
     async def _end_phase(self):
         pass
 
-    async def _run_phase_timer(self):
-        """Handle countdown timer for current phase."""
-
-        await asyncio.sleep(self.duration)
-        await manager.broadcast(self.game.session_id, {
-            "event": "phase_timeout",
-            "phase": self.name
-        })
-
-        await self.end()
-
 
 class StartUpPhase(Phase):
     def __init__(self, game, duration=0):
         super().__init__(game, 5)
 
     async def _start_phase(self):
-        await self._run_phase_timer()
+        pass
 
     async def handle_event(self, sender, event, data):
         pass
@@ -68,31 +58,35 @@ class HintingPhase(Phase):
         super().__init__(game, 30)
 
     async def _start_phase(self):
-        await self._run_phase_timer()
+        pass
 
     async def handle_event(self, sender, event, data):
         if self.game.current_player == sender and event == "give_hint":
-            self.game.hints.append(data["clue"])
-            await manager.broadcast(self.game.session_id, {
-                "event": "hint_given",
-                "clue": data["clue"]
-            })
+            self.game.hints.append(data["hint"])
 
     async def _end_phase(self):
         await self.game.set_phase(GuessingPhase(self.game))
 
+class Guess(BaseModel):
+    player_id: str
+    position: tuple  # (row, col)
 
 class GuessingPhase(Phase):
     def __init__(self, game, duration=0):
         super().__init__(game, 60)
 
     async def _start_phase(self):
-        await self._run_phase_timer()
+        pass
 
     async def handle_event(self, sender, event, data):
         if self.game.current_player != sender and event == "make_guess":
             # guess logic
             self.game.player_guesses[sender] = data["guess"]
+            guess = Guess(
+                player_id=sender,
+                position=data["guess"]
+            )
+            self.game.guesses.append(guess)
             if self.all_players_guessed():
                 await self.end()
 
@@ -109,7 +103,7 @@ class ChoicePhase(Phase):
         self.end_round = False
 
     async def _start_phase(self):
-        await self._run_phase_timer()
+        pass
 
     async def handle_event(self, sender, event, data):
         if self.game.current_player == sender and event == "make_choice":
@@ -124,8 +118,7 @@ class ChoicePhase(Phase):
 
     async def _end_phase(self):
         if self.end_round:
-            self.game.new_round()
-            await self.game.set_phase(HintingPhase(self.game))
+            await self.game.set_phase(ScorePhase(self.game))
         else:
             self.game.player_guesses.clear()
             await self.game.set_phase(HintingPhase(self.game))
@@ -133,13 +126,17 @@ class ChoicePhase(Phase):
 
 class ScorePhase(Phase):
     def __init__(self, game, duration=0):
-        super().__init__(game, 0)
+        super().__init__(game, 5)
 
     async def _start_phase(self):
-        await self.end()
+        self.calculate_scores()
 
     async def handle_action(self, sender, event, data):
         pass
 
     async def _end_phase(self):
         await self.game.set_phase(HintingPhase(self.game))
+
+    def calculate_scores(self):
+        for player, score in self.game.player_scores:
+            self.game.player_scores[player.player_id] = score + 1
