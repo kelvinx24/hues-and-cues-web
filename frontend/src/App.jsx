@@ -20,9 +20,9 @@ function App() {
 
     const data = await res.json();
     setTimeout(() => {
-  setSessionId(data.session_id);
-  setPlayerId(data.you);
-  setView("lobby");
+    setSessionId(data.session_id);
+    setPlayerId(data.you);
+    setView("lobby");
 }, 200);
   };
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useSocket } from "../context/WebSocketContext";
+import "../App.css";
 
 
 export default function Game({ gameId, playerId, onLeave }) {
@@ -35,12 +36,12 @@ export default function Game({ gameId, playerId, onLeave }) {
     try {
       await sendMessage({
         event: "give_hint",
-        sender: playerId,
+        player_id: playerId,
         data: {
           hint: hintText
         }
       });
-      setClueText('');
+      setHintText('');
     } catch (error) {
       console.error('Failed to give clue:', error);
       alert('Failed to give clue');
@@ -51,7 +52,7 @@ export default function Game({ gameId, playerId, onLeave }) {
     try {
       await sendMessage({
         event: "make_guess",
-        sender: playerId,
+        player_id: playerId,
         data: {
           row: row,
           col: col
@@ -136,12 +137,11 @@ export default function Game({ gameId, playerId, onLeave }) {
             <div className="scores-section">
               <h3>Scores</h3>
               <div className="scores-list">
-                {Object.entries(gameData?.scores || {}).map(([pid, score]) => {
-                  const player = gameData?.players?.find(p => p.id === pid)
+                {Object.entries(gameData?.player_data || {}).map(([pid, data]) => {
                   return (
                     <div key={pid} className="score-item">
-                      <span>{player?.name}</span>
-                      <span className="score">{score}</span>
+                      <span>{data.player.name}</span>
+                      <span className="score">{data.score}</span>
                     </div>
                   )
                 })}
@@ -150,15 +150,37 @@ export default function Game({ gameId, playerId, onLeave }) {
 
             <div className="guesses-section">
               <h3>Recent Guesses</h3>
-              <div className="guesses-list">
-                {gameData?.guesses?.slice(-5).reverse().map((guess, index) => (
-                  <div key={index} className="guess-item">
-                    <strong>{guess.player_name}:</strong> {guess.guess}
-                  </div>
-                ))}
+                <div className="guesses-list">
+                  {gameData?.guesses?.slice(-5).reverse().map((guess, index) => {
+                    const [r, c] = guess.position || [];
+                    const color = colors?.[r]?.[c];
+
+                    return (
+                      <div key={index} className="guess-item">
+                        <strong>{guess.player.name}:</strong>
+
+                        {/* Small color preview square */}
+                        {color && (
+                          <span
+                            className="guess-color-square"
+                            style={{
+                              display: "inline-block",
+                              width: "16px",
+                              height: "16px",
+                              borderRadius: "3px",
+                              backgroundColor: color,
+                              marginLeft: "8px",
+                              verticalAlign: "middle"
+                            }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+
             </div>
-          </div>
 
           <div className="board-container">
             <h2>Color Board</h2>
@@ -171,9 +193,9 @@ export default function Game({ gameId, playerId, onLeave }) {
                   <div key={rowIndex} className="color-row">
                     {row.map((color, colIndex) => {
                       const isTarget = targetColor && targetColor[0] === rowIndex && targetColor[1] === colIndex
-                      const wasGuessed = gameData?.guesses?.some(
-                        g => g.position[0] === rowIndex && g.position[1] === colIndex
-                      )
+                      const wasGuessed = Object.values(gameData?.player_data ?? {}).some(
+                        p => p.guess && p.guess[0] === rowIndex && p.guess[1] === colIndex
+                      );
                       
                       return (
                         <div

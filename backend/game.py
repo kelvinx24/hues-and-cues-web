@@ -12,7 +12,10 @@ class State(str, Enum):
     PLAYING = "playing"
     FINISHED = "finished"
 
-
+class PlayerData(BaseModel):
+    player: Player
+    score: int = 0
+    guess: tuple = None
 
 
 class Game(BaseModel):
@@ -21,8 +24,7 @@ class Game(BaseModel):
     players: List[Player] = []
     target_color: Optional[tuple] = None
     current_player: Optional[str] = None
-    player_scores:  dict[str, int] = {}
-    player_guesses: dict[str, str] = {}
+    player_data: dict[str, PlayerData] = {}
     hints: List[str] = []
     guesses: List[Guess] = []
     status: State = State.PLAYING
@@ -54,7 +56,16 @@ class Game(BaseModel):
     async def startup(self):
         self.target_color = self.generate_random_color()
         self.current_player = self.generate_random_player()
+        for p in self.players:
+            self.player_data[p.player_id] = PlayerData(
+                player=p
+            )
+
+        self._phase = HintingPhase(self)
+
         await manager.broadcast_game_state(self, "game_start", exclude_colors=False)
+
+
 
     def generate_random_color(self):
         row = random.randint(0, len(self.colors) - 1)
@@ -95,7 +106,7 @@ class Game(BaseModel):
         # When timer hits zero
         await manager.broadcast_to_session(self.session_id, {
             "event": "phase_timer_end",
-            "phase": self._phase.name if self.phase else None
+            "phase": self._phase.name if self._phase else None
         })
 
         # End the current phase
@@ -103,8 +114,8 @@ class Game(BaseModel):
             await self._phase.end()
 
     async def handle_action(self, body: dict):
-        player_id = body["player_id"]
-        event = body["event"]
+        player_id = body.get("player_id")
+        event = body.get("event")
         data = body.get("data", {})
 
         """Delegate an action to the active phase."""

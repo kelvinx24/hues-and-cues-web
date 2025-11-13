@@ -2,6 +2,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from pydantic import BaseModel
 from connection_manager import manager
+from player import Player
 
 class Phase(ABC):
     def __init__(self, game: "Game", duration: int = 0):
@@ -28,7 +29,7 @@ class Phase(ABC):
         pass
 
     async def end(self):
-        if not self.end:  # and self.end_phase:
+        if not self.ended:  # and self.end_phase:
             await self._end_phase()
             self.ended = True
 
@@ -63,12 +64,14 @@ class HintingPhase(Phase):
     async def handle_event(self, sender, event, data):
         if self.game.current_player == sender and event == "give_hint":
             self.game.hints.append(data["hint"])
+            await self.end()
 
     async def _end_phase(self):
         await self.game.set_phase(GuessingPhase(self.game))
+        print("ENDING PHASE")
 
 class Guess(BaseModel):
-    player_id: str
+    player: Player
     position: tuple  # (row, col)
 
 class GuessingPhase(Phase):
@@ -81,10 +84,11 @@ class GuessingPhase(Phase):
     async def handle_event(self, sender, event, data):
         if self.game.current_player != sender and event == "make_guess":
             # guess logic
-            self.game.player_guesses[sender] = data["guess"]
+            pos = (data.get("row"), data.get("col"))
+            self.game.player_data[sender].guess = pos
             guess = Guess(
-                player_id=sender,
-                position=data["guess"]
+                player=self.game.player_data[sender].player,
+                position=pos
             )
             self.game.guesses.append(guess)
             if self.all_players_guessed():
@@ -94,7 +98,12 @@ class GuessingPhase(Phase):
         await self.game.set_phase(ChoicePhase(self.game))
 
     def all_players_guessed(self):
-        return len(self.game.player_guesses) == len(self.game.players) - 1
+        count = 0
+        for player, data in self.game.player_data.items():
+            if data.guess is not None:
+                count += 1
+
+        return count == len(self.game.players) - 1 
 
 
 class ChoicePhase(Phase):
@@ -120,7 +129,9 @@ class ChoicePhase(Phase):
         if self.end_round:
             await self.game.set_phase(ScorePhase(self.game))
         else:
-            self.game.player_guesses.clear()
+            for player,data in self.game.player_data.items():
+                data.guess = None
+
             await self.game.set_phase(HintingPhase(self.game))
 
 
@@ -138,5 +149,5 @@ class ScorePhase(Phase):
         await self.game.set_phase(HintingPhase(self.game))
 
     def calculate_scores(self):
-        for player, score in self.game.player_scores:
-            self.game.player_scores[player.player_id] = score + 1
+        for player, data in self.game.player_data.items():
+            self.game.player_data[player].score = data.score + 1

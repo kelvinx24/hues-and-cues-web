@@ -105,7 +105,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
     try:
         while True:
             # We can listen if players send messages too
-            data = await websocket.receive_text()
+            data = await websocket.receive_json()
             print(f"Received from {player_id}: {data}")
             await current_session.current_game.handle_action(data)
     except WebSocketDisconnect:
