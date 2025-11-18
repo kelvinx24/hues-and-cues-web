@@ -52,7 +52,7 @@ export default function Lobby({ sessionId, playerId, onStart, onLeave }) {
       <button 
         onClick={startGame} 
         className="btn btn-primary"
-        disabled={!sessionData || sessionData.players?.length < 2}
+        disabled={!sessionData || sessionData.players?.length < 2 || sessionData.leader?.player_id != playerId}
       >
         Start Game
       </button>

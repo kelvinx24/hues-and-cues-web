@@ -443,3 +443,34 @@
     height: 30px;
   }
 }
+
+.startup-phase-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  text-align: center;
+}
+
+.startup-title {
+  font-size: 2.5rem;
+  font-weight: bold;
+}
+
+.startup-subtitle {
+  font-size: 1.5rem;
+  margin-top: 8px;
+}
+
+.startup-timer {
+  margin-top: 18px;
+  font-size: 3rem;
+  font-weight: bold;
+}
+
+.startup-hint {
+  margin-top: 10px;
+  font-size: 1.1rem;
+  color: #666;
+}

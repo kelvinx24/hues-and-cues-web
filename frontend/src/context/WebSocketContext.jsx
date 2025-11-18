@@ -4,6 +4,7 @@ const SocketContext = createContext(null);
 
 export const SocketProvider = ({ sessionId, playerId, children }) => {
   const [messages, setMessages] = useState([]);
+  const [lastMessage, setLastMessage] = useState(null);
   const [connected, setConnected] = useState(false);
   const socketRef = useRef(null);
 
@@ -21,13 +22,18 @@ export const SocketProvider = ({ sessionId, playerId, children }) => {
 
     };
       
-    ws.onclose = () => console.log("❌ WebSocket disconnected");
+    ws.onclose = () => {
+      console.log("❌ WebSocket disconnected");
+      setConnected(false);
+    }
+
     ws.onerror = (err) => console.error("WebSocket error:", err);
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       console.log("📩 Message received:", data);
       setMessages((prev) => [...prev, data]);
+      setLastMessage(data);
     };
 
     // Cleanup on unmount or when player leaves
@@ -40,12 +46,12 @@ export const SocketProvider = ({ sessionId, playerId, children }) => {
   // Send helper
   const sendMessage = (data) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify(data));
+      socketRef.current?.send(JSON.stringify(data));
     }
   };
 
   return (
-    <SocketContext.Provider value={{ socket: socketRef.current, messages, sendMessage, connected }}>
+    <SocketContext.Provider value={{ socket: socketRef.current, messages, lastMessage, sendMessage, connected }}>
       {children}
     </SocketContext.Provider>
   );

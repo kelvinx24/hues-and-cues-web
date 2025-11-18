@@ -51,7 +51,7 @@ class StartUpPhase(Phase):
         pass
 
     async def _end_phase(self):
-        await self.game._start_phase(HintingPhase(self.game))
+        await self.game.set_phase(HintingPhase(self.game))
 
 
 class HintingPhase(Phase):
@@ -142,7 +142,7 @@ class ScorePhase(Phase):
     async def _start_phase(self):
         self.calculate_scores()
 
-    async def handle_action(self, sender, event, data):
+    async def handle_event(self, sender, event, data):
         pass
 
     async def _end_phase(self):

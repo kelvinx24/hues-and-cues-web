@@ -4,28 +4,64 @@ import "../App.css";
 
 
 export default function Game({ gameId, playerId, onLeave }) {
-  const { socket, messages, sendMessage, connected } = useSocket();
+  const { socket, messages, lastMessage, latestGameState,sendMessage, connected } = useSocket();
   const [gameData, setGameData] = useState(null);
   const [hintText, setHintText] = useState('');
-  const [timeText, setTimeText] = useState('');
+  const [timeLeft, setTimeLeft] = useState(gameData?.phase_time_remaining ?? 0);
   const [colors, setColors] = useState([]);
 
-  useEffect(() => {
-      if (messages.length === 0) return;
-      const msg = messages[messages.length - 1];
   
-      if (msg.event === "game_update") {
-        // Add player to list
-        setGameData(msg.data);
-        
-      } 
-      else if (msg.event === "game_start") {
-        console.log("Game START")
-        setGameData(msg.data);
-        setColors(msg.data.colors);
-      }
-    }, [messages]
-  );
+  useEffect(() => {
+    if (!lastMessage) return;
+
+    switch (lastMessage.event) {
+      case "game_update":
+        setGameData(lastMessage.data);
+        break;
+
+      case "game_start":
+        console.log("Game START");
+        setGameData(lastMessage.data);
+        break;
+    }
+  }, [lastMessage]);
+
+  useEffect(() => {
+    if (!connected) return;
+
+    sendMessage({
+      event: "request_game_state",
+      player_id: playerId,
+    });
+  }, [connected]);
+
+  useEffect(() => {
+    if (gameData?.colors) {
+      setColors(gameData.colors);
+    }
+  }, [gameData]);
+
+  function formatTime(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  useEffect(() => {
+  // whenever server updates the time, reset local timer
+  setTimeLeft(gameData?.phase_time_remaining ?? 0);
+}, [gameData?.phase_time_remaining]);
+
+  useEffect(() => {
+    if (timeLeft <= 0) return;
+
+    const interval = setInterval(() => {
+      setTimeLeft(prev => Math.max(prev - 1, 0));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [timeLeft]);
+
 
   const giveHint = async () => {
     if (!hintText.trim()) {
@@ -65,6 +101,38 @@ export default function Game({ gameId, playerId, onLeave }) {
     }
   }
 
+  const choiceEnd = async () => {
+    try {
+      await sendMessage({
+        event: "make_choice",
+        player_id: playerId,
+        data: {
+          choice: "end"
+        }
+      });
+
+    } catch (error) {
+      console.error('Failed to make end choice:', error);
+      alert('Failed to make end choice');
+    }
+  }
+  
+  const choiceContinue = async () => {
+    try {
+      await sendMessage({
+        event: "make_choice",
+        player_id: playerId,
+        data: {
+          choice: "continue"
+        }
+      });
+
+    } catch (error) {
+      console.error('Failed to make continue choice:', error);
+      alert('Failed to make continue choice');
+    }
+  }
+
   const renderGame = () => {
     const isCurrentPlayer = gameData?.current_player === playerId;
     const targetColor = gameData?.target_color;
@@ -76,6 +144,13 @@ export default function Game({ gameId, playerId, onLeave }) {
           <div className="game-info-bar">
             <span>Game ID: {gameId}</span>
             <span>Players: {gameData?.players?.length}</span>
+            <div className="phase-info">
+            <h3>Phase: {gameData?.current_phase || "Unknown"}</h3>
+
+            <div className="timer">
+              Time remaining: <strong>{formatTime(timeLeft)}</strong>
+            </div>
+          </div>
           </div>
         </div>
 
@@ -222,15 +297,57 @@ export default function Game({ gameId, playerId, onLeave }) {
     );
   }
 
-  const renderGameTest = () => {
-      return (
-    <div>
-      <h2>Game in progress</h2>
-      <p>Connection: {connected ? "🟢 Connected" : "🔴 Disconnected"}</p>
-    </div>
-  );
+  
+
+  if (gameData?.current_phase === "startup") {
+    return (
+      <div className="startup-phase-container">
+        <h1 className="startup-title">🎮 Get Ready!</h1>
+        <h2 className="startup-subtitle">Game starts in</h2>
+
+        <div className="startup-timer">
+          {formatTime(timeLeft)}
+        </div>
+
+        <p className="startup-hint">Waiting for all players…</p>
+      </div>
+    );
   }
 
+  // Choice Phase UI (only for the hinter)
+  else if (gameData?.current_phase === "choice") {
+    const isHinter = playerId === gameData.current_player;
 
-  return renderGame();
+    return (
+      <div className="choice-phase-container">
+        <h2>Choice Phase</h2>
+
+        {isHinter ? (
+          <>
+            <p>You are the hinter. Choose how to proceed:</p>
+
+            <button
+              className="choice-button end-round"
+              onClick={choiceEnd}
+            >
+              End Round
+            </button>
+
+            <button
+              className="choice-button continue-round"
+              onClick={choiceContinue}
+            >
+              Continue Round
+            </button>
+          </>
+        ) : (
+          <p>The hinter is deciding whether the round continues…</p>
+        )}
+      </div>
+    );
+  }
+
+  else {
+    return renderGame();
+  }
 }

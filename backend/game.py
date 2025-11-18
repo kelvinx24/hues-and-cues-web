@@ -5,7 +5,7 @@ from pydantic import BaseModel, PrivateAttr
 from typing import List, Optional, Dict
 from player import Player
 from connection_manager import manager
-from phase import Phase, HintingPhase, GuessingPhase, ChoicePhase, Guess
+from phase import Phase, HintingPhase, GuessingPhase, ChoicePhase, Guess, StartUpPhase
 
 class State(str, Enum):
     WAITING = "waiting"
@@ -29,6 +29,7 @@ class Game(BaseModel):
     guesses: List[Guess] = []
     status: State = State.PLAYING
     _phase: Optional[Phase] = PrivateAttr(default=None)
+    _timer_task: Optional[asyncio.Task] = PrivateAttr(default=None)
     phase_time_remaining: int = 0
     colors: List[List] = [
         # Reds
@@ -61,9 +62,13 @@ class Game(BaseModel):
                 player=p
             )
 
-        self._phase = HintingPhase(self)
+        self._phase = StartUpPhase(self)
+
 
         await manager.broadcast_game_state(self, "game_start", exclude_colors=False)
+
+        await self.set_phase(StartUpPhase(self))
+
 
 
 
@@ -78,12 +83,21 @@ class Game(BaseModel):
         return random_player
 
     async def set_phase(self, phase):
+         # Cancel any existing timer
+        if self._timer_task and not self._timer_task.done():
+            self._timer_task.cancel()
+            print("Canceled task")
+            try:
+                await self._timer_task
+            except asyncio.CancelledError:
+                pass
+
         """Start a new phase, replacing the current one."""
         self._phase = phase
         await manager.broadcast_game_state(self)
 
         if phase.duration > 0:
-            asyncio.create_task(self.run_phase_timer(phase.duration))
+            self._timer_task = asyncio.create_task(self.run_phase_timer(phase.duration))
         # Start phase
         await phase.start()
         await manager.broadcast_game_state(self)
@@ -95,19 +109,13 @@ class Game(BaseModel):
 
         while self.phase_time_remaining > 0:
             # Broadcast remaining time to all players
-            await manager.broadcast_to_session(self.session_id, {
-                "event": "phase_timer_update",
-                "time_remaining": self.phase_time_remaining
-            })
+            await manager.broadcast_game_state(self)
 
             await asyncio.sleep(1)
             self.phase_time_remaining -= 1
 
         # When timer hits zero
-        await manager.broadcast_to_session(self.session_id, {
-            "event": "phase_timer_end",
-            "phase": self._phase.name if self._phase else None
-        })
+        await manager.broadcast_game_state(self)
 
         # End the current phase
         if self._phase:
@@ -117,6 +125,11 @@ class Game(BaseModel):
         player_id = body.get("player_id")
         event = body.get("event")
         data = body.get("data", {})
+
+        if (event == "request_game_state"):
+            await manager.broadcast_game_state(self, exclude_colors=False)
+            return
+
 
         """Delegate an action to the active phase."""
         await self._phase.handle_event(player_id, event, data)
