@@ -251,7 +251,7 @@
   border: 3px solid #4caf50;
 }
 
-.clues-section,
+.hints-section,
 .scores-section,
 .guesses-section {
   background: #f8f9fa;
@@ -259,7 +259,7 @@
   border-radius: 10px;
 }
 
-.clues-section h3,
+.hints-section h3,
 .scores-section h3,
 .guesses-section h3 {
   margin-bottom: 1rem;
@@ -267,13 +267,13 @@
   font-size: 1.1rem;
 }
 
-.clue-input-group {
+.hint-input-group {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 1rem;
 }
 
-.clues-list,
+.hints-list,
 .guesses-list {
   display: flex;
   flex-direction: column;
@@ -282,7 +282,7 @@
   overflow-y: auto;
 }
 
-.clue-item,
+.hint-item,
 .guess-item {
   padding: 0.5rem;
   background: white;

@@ -3,7 +3,7 @@ import { useSocket } from "../context/WebSocketContext";
 import "../App.css";
 
 
-export default function Game({ gameId, playerId, onLeave }) {
+export default function Game({ sessionId, gameId, playerId, onLeave }) {
   const { socket, messages, lastMessage, latestGameState,sendMessage, connected } = useSocket();
   const [gameData, setGameData] = useState(null);
   const [hintText, setHintText] = useState('');
@@ -65,7 +65,7 @@ export default function Game({ gameId, playerId, onLeave }) {
 
   const giveHint = async () => {
     if (!hintText.trim()) {
-      alert('Please enter a clue');
+      alert('Please enter a hint');
       return;
     }
 
@@ -79,8 +79,8 @@ export default function Game({ gameId, playerId, onLeave }) {
       });
       setHintText('');
     } catch (error) {
-      console.error('Failed to give clue:', error);
-      alert('Failed to give clue');
+      console.error('Failed to give hint:', error);
+      alert('Failed to give hint');
     }
   }
 
@@ -142,7 +142,7 @@ export default function Game({ gameId, playerId, onLeave }) {
         <div className="game-header">
           <h1>🎨 Hues and Cues</h1>
           <div className="game-info-bar">
-            <span>Game ID: {gameId}</span>
+            <span>Session ID: {sessionId}</span>
             <span>Players: {gameData?.players?.length}</span>
             <div className="phase-info">
             <h3>Phase: {gameData?.current_phase || "Unknown"}</h3>
@@ -160,7 +160,7 @@ export default function Game({ gameId, playerId, onLeave }) {
               {isCurrentPlayer ? (
                 <div className="your-turn">
                   <h3>🎯 Your Turn!</h3>
-                  <p>Give clues to help others guess your color</p>
+                  <p>Give hints to help others guess your color</p>
                   {targetColor && colors && (
                     <div 
                       className="target-color-preview"
@@ -172,7 +172,7 @@ export default function Game({ gameId, playerId, onLeave }) {
                 </div>
               ) : (
                 <div className="others-turn">
-                  <h3>Waiting...</h3>
+                  <h3>You are not the hinter!</h3>
                   <p>
                     {gameData?.players?.find(p => p.player_id === gameData?.current_player)?.name ||
                       "Someone"}{" "}
@@ -195,33 +195,35 @@ export default function Game({ gameId, playerId, onLeave }) {
             </div>
 
             <div className="hints-section">
-              <h3>Hints</h3>
               {isCurrentPlayer && (
-                <div className="hint-input-group">
-                  <input
-                    type="text"
-                    placeholder="Enter a color clue..."
-                    value={hintText}
-                    onChange={(e) => setHintText(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && giveHint()}
-                    className="input-field"
-                  />
-                  <button onClick={giveHint} className="btn btn-small">
-                    Send
-                  </button>
-                </div>
+                <>
+                  <h3>Give Hint</h3>
+                  <div className="hint-input-group">
+                    <input
+                      type="text"
+                      placeholder="Enter a color clue..."
+                      value={hintText}
+                      onChange={(e) => setHintText(e.target.value)}
+                      onKeyPress={(e) => e.key === "Enter" && giveHint()}
+                      className="input-field"
+                    />
+                    <button onClick={giveHint} className="btn btn-small">
+                      Send
+                    </button>
+                  </div>
+                </>
               )}
-              <div className="hints-section">
-                <h3>Clues</h3>
-                <div className="hints-list">
-                  {gameData?.hints?.map((clue, index) => (
-                    <div key={index} className="hint-item">
-                      {clue}
-                    </div>
-                  ))}
-                </div>
+
+              <h3>Hints</h3>
+              <div className="hints-list">
+                {gameData?.hints?.map((clue, index) => (
+                  <div key={index} className="hint-item">
+                    {clue}
+                  </div>
+                ))}
               </div>
             </div>
+
 
             <div className="choice-phase-container">
               {isCurrentPlayer && gameData?.current_phase === "choice" && (
