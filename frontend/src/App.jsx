@@ -18,12 +18,17 @@ function App() {
       body: JSON.stringify({ name }),
     });
 
+    if (!res.ok) {
+      alert("Failed to create or join session: " + joinId);
+      return;  // ❗ Do nothing else
+    }
+
     const data = await res.json();
     setTimeout(() => {
-    setSessionId(data.session_id);
-    setPlayerId(data.you);
-    setView("lobby");
-}, 200);
+      setSessionId(data.session_id);
+      setPlayerId(data.you);
+      setView("lobby");
+    }, 200);
   };
 
   const handleStartGame = () => setView("game");

@@ -117,6 +117,9 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
 
 @app.post("/session/create")
 def create_session(entered_name: CreateJoinSessionRequest):
+    if len(entered_name.name) == 0:
+        raise HTTPException(status_code=400, detail="Blank name not allowed")
+    
     """Create a new game room"""
     new_session_id = str(uuid.uuid4())[:8]
     new_player_id = str(uuid.uuid4())[:8]
@@ -150,6 +153,9 @@ def join_game(session_id: str, entered_name: CreateJoinSessionRequest):
     
     if len(session.players) >= 10:
         raise HTTPException(status_code=400, detail="Game is full")
+    
+    if len(entered_name.name) == 0:
+        raise HTTPException(status_code=400, detail="Blank name not allowed")
     
     new_player_id = str(uuid.uuid4())[:8]
     player = Player(
