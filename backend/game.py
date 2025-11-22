@@ -69,7 +69,7 @@ class Game(BaseModel):
 
         await self.set_phase(StartUpPhase(self))
 
-
+    
 
 
     def generate_random_color(self):
@@ -78,15 +78,15 @@ class Game(BaseModel):
         random_color = (row, col)
         return random_color
     
-    def generate_random_player(self):
-        random_player = random.choice(self.players).player_id
-        return random_player
+    def generate_random_player(self, exclude=None):
+        choices = [p for p in self.players if p.player_id != exclude]
+        return random.choice(choices).player_id
+
 
     async def set_phase(self, phase):
          # Cancel any existing timer
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
-            print("Canceled task")
             try:
                 await self._timer_task
             except asyncio.CancelledError:
@@ -119,6 +119,7 @@ class Game(BaseModel):
 
         # End the current phase
         if self._phase:
+            print("TIMER ENDING")
             await self._phase.end()
 
     async def handle_action(self, body: dict):
@@ -146,7 +147,7 @@ class Game(BaseModel):
             game_dict["current_phase"] = self._phase.name
 
         # Hide target color for all except the current player
-        if for_player_id is None or for_player_id != self.current_player:
+        if (self._phase.name != "score") and (for_player_id is None or for_player_id != self.current_player):
             game_dict.pop("target_color", None)
 
         if exclude_colors:

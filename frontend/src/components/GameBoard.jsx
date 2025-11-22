@@ -174,10 +174,24 @@ export default function Game({ gameId, playerId, onLeave }) {
                 <div className="others-turn">
                   <h3>Waiting...</h3>
                   <p>
-                    {gameData?.players?.find(p => p.player_id === gameData?.current_player)?.name || 'Someone'}'s turn
+                    {gameData?.players?.find(p => p.player_id === gameData?.current_player)?.name ||
+                      "Someone"}{" "}
+                    's turn
                   </p>
+
+                  {/* SHOW TARGET COLOR TO ALL PLAYERS AT END OF ROUND */}
+                  {gameData?.current_phase === "score" &&
+                    targetColor &&
+                    colors && (
+                      <div
+                        className="target-color-preview"
+                        style={{ backgroundColor: colors[targetColor[0]]?.[targetColor[1]] }}
+                      >
+                        Round Target Color
+                      </div>
+                    )}
                 </div>
-              )}
+                )}
             </div>
 
             <div className="hints-section">
@@ -207,6 +221,28 @@ export default function Game({ gameId, playerId, onLeave }) {
                   ))}
                 </div>
               </div>
+            </div>
+
+            <div className="choice-phase-container">
+              {isCurrentPlayer && gameData?.current_phase === "choice" && (
+                <>
+                  <p>Choose how to proceed:</p>
+
+                  <button
+                    className="choice-button end-round"
+                    onClick={choiceEnd}
+                  >
+                    End Round
+                  </button>
+
+                  <button
+                    className="choice-button continue-round"
+                    onClick={choiceContinue}
+                  >
+                    Continue Round
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="scores-section">
@@ -310,39 +346,6 @@ export default function Game({ gameId, playerId, onLeave }) {
         </div>
 
         <p className="startup-hint">Waiting for all players…</p>
-      </div>
-    );
-  }
-
-  // Choice Phase UI (only for the hinter)
-  else if (gameData?.current_phase === "choice") {
-    const isHinter = playerId === gameData.current_player;
-
-    return (
-      <div className="choice-phase-container">
-        <h2>Choice Phase</h2>
-
-        {isHinter ? (
-          <>
-            <p>You are the hinter. Choose how to proceed:</p>
-
-            <button
-              className="choice-button end-round"
-              onClick={choiceEnd}
-            >
-              End Round
-            </button>
-
-            <button
-              className="choice-button continue-round"
-              onClick={choiceContinue}
-            >
-              Continue Round
-            </button>
-          </>
-        ) : (
-          <p>The hinter is deciding whether the round continues…</p>
-        )}
       </div>
     );
   }

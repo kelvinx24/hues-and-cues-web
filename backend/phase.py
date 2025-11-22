@@ -146,6 +146,15 @@ class ScorePhase(Phase):
         pass
 
     async def _end_phase(self):
+        self.game.current_player = self.game.generate_random_player(
+            exclude=self.game.current_player
+        )
+        self.game.target_color = self.game.generate_random_color()
+        self.game.guesses.clear()
+        self.game.hints.clear()
+        for id, pd in self.game.player_data.items():
+            pd.guess = None
+
         await self.game.set_phase(HintingPhase(self.game))
 
     def calculate_scores(self):
