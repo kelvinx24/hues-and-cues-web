@@ -24,6 +24,8 @@ export default function Lobby({ sessionId, playerId, onStart, onLeave }) {
     } else if (msg.event === "game_start") {
       // Game started — move to playing state
       onStart();
+    } else if (msg.event === "session_end") {
+      onLeave();
     }
   }, [messages]);
 

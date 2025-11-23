@@ -5,7 +5,7 @@ from pydantic import BaseModel, PrivateAttr
 from typing import List, Optional, Dict
 from player import Player
 from connection_manager import manager
-from phase import Phase, HintingPhase, GuessingPhase, ChoicePhase, Guess, StartUpPhase
+from phase import Phase, HintingPhase, GuessingPhase, ChoicePhase, Guess, StartUpPhase, NonePhase
 
 class State(str, Enum):
     WAITING = "waiting"
@@ -21,6 +21,7 @@ class PlayerData(BaseModel):
 class Game(BaseModel):
     game_id: str
     session_id: str
+    is_over: bool = False
     players: List[Player] = []
     target_color: Optional[tuple] = None
     current_player: Optional[str] = None
@@ -135,6 +136,51 @@ class Game(BaseModel):
         """Delegate an action to the active phase."""
         await self._phase.handle_event(player_id, event, data)
         await manager.broadcast_game_state(self)
+
+    async def leave(self, player: Player):
+        if player not in self.players:
+            return False
+        
+        if len(self.players) <= 2:
+            self.is_over = True
+            self.clear_game()
+            return True
+        
+        if not self.is_over:
+            if player.player_id == self.current_player:
+                self.reset_round()
+                self.players.remove(player)
+                del self.player_data[player.player_id]
+                await self.set_phase(HintingPhase(self))
+            else:
+                self.players.remove(player)
+                del self.player_data[player.player_id]
+                await manager.broadcast_game_state(self)
+
+        
+
+            return True
+
+
+
+    def reset_round(self):
+        self.current_player = self.game.generate_random_player(
+            exclude=self.game.current_player
+        )
+        self.target_color = self.game.generate_random_color()
+        self.guesses.clear()
+        self.hints.clear()
+        for id, pd in self.game.player_data.items():
+            pd.guess = None
+
+    def clear_game(self):
+        self.players.clear()
+        self.player_data.clear()
+        self.guesses.clear()
+        self.hints.clear()
+        self._phase = NonePhase(self)
+        self.phase_time_remaining = 0
+        
 
     def to_dict(self, for_player_id: Optional[str] = None, exclude_colors=True) -> dict:
         """Return a JSON-safe dict representation of the game for a specific player."""

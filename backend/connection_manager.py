@@ -18,7 +18,7 @@ class ConnectionManager:
         self.active_connections[session_id].append(websocket)
         self.player_connections[player_id] = websocket
 
-    def disconnect(self, session_id: str, player_id: str):
+    async def disconnect(self, session_id: str, player_id: str, socketOpen: bool = True):
         if player_id in self.player_connections:
             websocket = self.player_connections[player_id]
 
@@ -33,6 +33,13 @@ class ConnectionManager:
 
             # Always remove from player map last
             del self.player_connections[player_id]
+        
+            try:
+                await websocket.close()
+                return True
+            except RuntimeError:
+                return False
+            
 
     async def broadcast_to_session(self, session_id: str, message: dict):
         """Send a message to all players in a given session."""

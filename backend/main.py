@@ -38,7 +38,24 @@ class Session(BaseModel):
     current_game: Optional[Game] = None
 
     def active_game(self):
-        return self.current_game != None
+        return self.current_game != None and not self.current_game.is_over
+    
+    def join(self, player: Player):
+        if self.current_game is None:
+            self.players.append(player)
+            return True
+
+        return False
+    
+    async def leave(self, player: Player):
+        if player in self.players:
+            self.players.remove(player)
+            if self.active_game():
+                await self.current_game.leave(player)
+
+            if player.player_id == self.leader.player_id:
+                self.current_game = None
+
 
 
 
@@ -183,19 +200,38 @@ async def leave_game(session_id: str, leaveReq: LeaveSessionRequest):
     
     player = players[player_id]
 
-    session.players.remove(player)
+    await session.leave(player)
+    del players[player_id]
+    await manager.disconnect(session_id, player_id)
 
-    manager.disconnect(session_id, player_id)
-    
-    await manager.broadcast_to_session(
-        session_id,
-        {
-            "event": "player_left",
-            "data": session.model_dump(),
-        },
-    )
+    if len(session.players) > 1 or (len(session.players) == 1 and not session.active_game() and (player_id != session.leader.player_id)):
+        await manager.broadcast_to_session(
+            session_id,
+            {
+                "event": "player_left",
+                "data": session.model_dump(),
+            },
+        )
+    else:
+        for remaining_player in session.players:
+            await session.leave(remaining_player)
+            await manager.broadcast_to_player(
+                remaining_player.player_id,
+                {
+                    "event": "session_end",
+                    "data": {
+                        "message": "Not enough players!"
+                    }
+                } 
+            )
+
+            await manager.disconnect(session.session_id, remaining_player.player_id)
+            del players[remaining_player.player_id]
+            
+        del sessions[session_id]
     
     return {"status": "success", "message": "game left"}
+    
 
     
 @app.post("/session/{session_id}/start")

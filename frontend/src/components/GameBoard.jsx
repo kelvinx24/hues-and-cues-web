@@ -23,6 +23,13 @@ export default function Game({ sessionId, gameId, playerId, onLeave }) {
         console.log("Game START");
         setGameData(lastMessage.data);
         break;
+      case "player_left":
+        if (lastMessage.data?.current_game?.is_over == false) {
+          break;
+        }  
+      case "session_end":
+        onLeave();
+        break;
     }
   }, [lastMessage]);
 
