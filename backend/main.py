@@ -47,6 +47,18 @@ class Session(BaseModel):
 
         return False
     
+    async def handle_action(self, body: dict):
+        event = body.get("event")
+        data = body.get("data", {})
+        if event == "request_session_state":
+            await manager.broadcast_to_session(
+                self.session_id,
+                {
+                    "event": "session_update",
+                    "data" : self.model_dump()
+                }
+            )
+    
     async def leave(self, player: Player):
         if player in self.players:
             self.players.remove(player)
@@ -268,6 +280,17 @@ async def start_game(session_id: str, player_id: str):
     await game.startup()
     
     return {"status": "success", "message": "game created"}
+
+@app.get("/session/{session_id}")
+async def get_game(session_id: str):
+    """Gets the game"""
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Game not found")
+    
+    session = sessions[session_id]
+    
+    return {"event": "session_update", "data": session.model_dump()}
+
 
 
 

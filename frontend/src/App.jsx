@@ -44,12 +44,16 @@ function App() {
     setView("menu");
   };
 
+  const handleEndGame = async() => {
+    setView("lobby")
+  }
+
   if (view === "menu") return <Menu onJoinOrCreate={handleCreateOrJoin} />;
 
   return (
     <SocketProvider sessionId={sessionId} playerId={playerId}>
       {view === "lobby" && <Lobby sessionId={sessionId} playerId={playerId} onStart={handleStartGame} onLeave={handleLeave} />}
-      {view === "game" && <Game sessionId={sessionId} playerId={playerId} onLeave={handleLeave} />}
+      {view === "game" && <Game sessionId={sessionId} playerId={playerId} onLeave={handleLeave} onEnd={handleEndGame} />}
     </SocketProvider>
   );
 }

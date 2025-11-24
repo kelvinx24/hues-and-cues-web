@@ -3,7 +3,7 @@ import { useSocket } from "../context/WebSocketContext";
 import "../App.css";
 
 
-export default function Game({ sessionId, gameId, playerId, onLeave }) {
+export default function Game({ sessionId, gameId, playerId, onLeave, onEnd }) {
   const { socket, messages, lastMessage, latestGameState,sendMessage, connected } = useSocket();
   const [gameData, setGameData] = useState(null);
   const [hintText, setHintText] = useState('');
@@ -22,6 +22,11 @@ export default function Game({ sessionId, gameId, playerId, onLeave }) {
       case "game_start":
         console.log("Game START");
         setGameData(lastMessage.data);
+        break;
+      case "game_end":
+        console.log("Game END");
+        setGameData(lastMessage.data);
+        onEnd();
         break;
       case "player_left":
         if (lastMessage.data?.current_game?.is_over == false) {
@@ -357,6 +362,30 @@ export default function Game({ sessionId, gameId, playerId, onLeave }) {
         <p className="startup-hint">Waiting for all players…</p>
       </div>
     );
+  }
+
+  else if (gameData?.current_phase === "endgame") {
+    const playersObj = gameData?.player_data || {};
+
+    // Convert object → array
+    const playersArray = Object.values(playersObj);
+
+    // Sort by score descending
+    const sortedPlayers = playersArray.sort((a, b) => b.score - a.score);
+    
+    return (
+      <div className="scores-section">
+      <h3>Top Scores</h3>
+      <div className="scores-list">
+        {sortedPlayers.map((p, index) => (
+          <div key={p.player.player_id} className="score-item">
+            <span>{index + 1}. {p.player.name}</span>
+            <span className="score">{p.score}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+    )
   }
 
   else {

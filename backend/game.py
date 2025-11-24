@@ -32,6 +32,8 @@ class Game(BaseModel):
     _phase: Optional[Phase] = PrivateAttr(default=None)
     _timer_task: Optional[asyncio.Task] = PrivateAttr(default=None)
     phase_time_remaining: int = 0
+    current_round: int = 0
+    total_rounds: int = 2
     colors: List[List] = [
         # Reds
         ["#8B0000", "#A52A2A", "#B22222", "#DC143C", "#FF0000", "#FF6347", "#FF7F50", "#CD5C5C", "#F08080", "#E9967A"],
@@ -180,6 +182,10 @@ class Game(BaseModel):
         self.hints.clear()
         self._phase = NonePhase(self)
         self.phase_time_remaining = 0
+
+    async def end_game(self):
+        self.is_over = True
+        await manager.broadcast_game_state(self, "game_end")
         
 
     def to_dict(self, for_player_id: Optional[str] = None, exclude_colors=True) -> dict:

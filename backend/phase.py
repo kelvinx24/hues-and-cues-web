@@ -144,6 +144,18 @@ class NonePhase(Phase):
     async def _end_phase(self):
         pass
 
+class EndGamePhase(Phase):
+    def __init__(self, game, duration=0):
+        super().__init__(game, 10)
+
+    async def _start_phase(self):
+        self.game.is_over = True
+
+    async def handle_event(self, sender, event, data):
+        pass
+
+    async def _end_phase(self):
+        await self.game.end_game()
 
 class ScorePhase(Phase):
     def __init__(self, game, duration=0):
@@ -156,8 +168,12 @@ class ScorePhase(Phase):
         pass
 
     async def _end_phase(self):
-        self.game.reset_round()
-        await self.game.set_phase(HintingPhase(self.game))
+        self.game.current_round += 1
+        if self.game.current_round >= self.game.total_rounds:
+            await self.game.set_phase(EndGamePhase(self.game))
+        else:
+            self.game.reset_round()
+            await self.game.set_phase(HintingPhase(self.game))
 
     def calculate_scores(self):
         """

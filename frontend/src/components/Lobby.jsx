@@ -14,10 +14,32 @@ export default function Lobby({ sessionId, playerId, onStart, onLeave }) {
   };
 
   useEffect(() => {
+  const loadSession = async () => {
+    try {
+      const res = await fetch(`http://localhost:8001/session/${sessionId}`);
+      if (!res.ok) {
+        onLeave();
+        return;
+      }
+
+      const json = await res.json();
+      setSessionData(json.data);
+
+    } catch (err) {
+      console.error(err);
+      onLeave();
+    }
+  };
+
+  loadSession();
+}, [sessionId]);
+
+
+  useEffect(() => {
     if (messages.length === 0) return;
     const msg = messages[messages.length - 1];
 
-    if (msg.event === "player_joined" || msg.event === "player_left") {
+    if (msg.event === "player_joined" || msg.event === "player_left" || msg.event === "session_update") {
       // Add player to list
       setSessionData(msg.data)
       
