@@ -160,5 +160,60 @@ class ScorePhase(Phase):
         await self.game.set_phase(HintingPhase(self.game))
 
     def calculate_scores(self):
+        """
+        Award points to all non-current players based on distance,
+        then award bonus points to the current player based on correctness percentage.
+        """
+
+        # ----- Distance → Score lookup table -----
+        # Edit here if you ever want to rebalance!
+        distance_score = {
+            0: 5,
+            1: 3,
+            2: 1,
+            3: 1
+        }
+
+        total_score = 0
+        current = self.game.current_player
+        num_guessers = len(self.game.players) - 1
+        max_score_per_player = 5
+
+        current_color = self.game.target_color
+
+        # ----- Score each non-current player -----
         for player, data in self.game.player_data.items():
-            self.game.player_data[player].score = data.score + 1
+            if player == current:
+                continue
+            
+            # distance = max of the guess tuple/list
+            guess = data.guess
+            disX = abs(guess[0] - current_color[0])
+            disY = abs(guess[1] - current_color[1])
+            distance = max(disX, disY)
+
+            # fallback to 0 if not in table
+            give_score = distance_score.get(distance, 0)
+
+            # apply
+            self.game.player_data[player].score += give_score
+            total_score += give_score
+
+        # ----- Compute correctness percentage (0–1 range) -----
+        max_total = num_guessers * max_score_per_player
+        percent_correct = total_score / max_total if max_total else 0
+
+        # ----- Award bonus to the current player -----
+        if percent_correct == 1:
+            bonus = 10
+        elif percent_correct >= 0.5:
+            bonus = 7
+        elif percent_correct >= 0.25:
+            bonus = 5
+        elif percent_correct > 0:
+            bonus = 3
+        else:
+            bonus = 0
+
+        self.game.player_data[current].score += bonus
+

@@ -164,13 +164,13 @@ class Game(BaseModel):
 
 
     def reset_round(self):
-        self.current_player = self.game.generate_random_player(
-            exclude=self.game.current_player
+        self.current_player = self.generate_random_player(
+            exclude=self.current_player
         )
-        self.target_color = self.game.generate_random_color()
+        self.target_color = self.generate_random_color()
         self.guesses.clear()
         self.hints.clear()
-        for id, pd in self.game.player_data.items():
+        for id, pd in self.player_data.items():
             pd.guess = None
 
     def clear_game(self):
