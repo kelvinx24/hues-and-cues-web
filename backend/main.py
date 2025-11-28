@@ -1,11 +1,10 @@
-from fastapi import FastAPI, Body, HTTPException, WebSocket, WebSocketDisconnect, BackgroundTasks
+from fastapi import FastAPI, Body, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Annotated, List, Optional, Dict
-import random
+from typing import Dict
 import uuid
 
-import json
+from backend.session import Session
 from connection_manager import manager
 
 from player import Player
@@ -23,57 +22,21 @@ app.add_middleware(
 )
 
 
-
-
 class CreateJoinSessionRequest(BaseModel):
+    """ Request model for creating or joining a session.
+    Attributes:
+        name (str): The name of the player.
+    """
+    
     name: str
 
 class LeaveSessionRequest(BaseModel):
+    """ Request model for leaving a session.
+    Attributes:
+        player_id (str): The ID of the player leaving the session.
+    """
+    
     player_id: str
-
-class Session(BaseModel):
-    session_id: str
-    leader: Player
-    players: List[Player] = []
-    current_game: Optional[Game] = None
-
-    def active_game(self):
-        return self.current_game != None and not self.current_game.is_over
-    
-    def join(self, player: Player):
-        if self.current_game is None:
-            self.players.append(player)
-            return True
-
-        return False
-    
-    async def handle_action(self, body: dict):
-        event = body.get("event")
-        data = body.get("data", {})
-        if event == "request_session_state":
-            await manager.broadcast_to_session(
-                self.session_id,
-                {
-                    "event": "session_update",
-                    "data" : self.model_dump()
-                }
-            )
-    
-    async def leave(self, player: Player):
-        if player in self.players:
-            self.players.remove(player)
-            if self.active_game():
-                await self.current_game.leave(player)
-
-            if player.player_id == self.leader.player_id:
-                self.current_game = None
-
-
-
-
-class Clue(BaseModel):
-    player_id: str
-    clue_text: str
 
 # Game state storage (in-memory for simplicity)
 sessions: Dict[str, Session] = {}
@@ -81,48 +44,34 @@ players: Dict[str, Player] = {}
 
 @app.get("/")
 def read_root():
+    """
+    Basic health check endpoint
+    """
     return {"message": "Hues and Cues Game API", "status": "running"}
-
-async def broadcast_to_rest(session_id: str, message: dict):
-    if session_id not in sessions:
-        return
-    
-    session = sessions[session_id]
-    game = session.current_game
-    if game is not None:
-        for player in session.players:
-            if player.player_id == game.current_player:
-                continue
-
-            await manager.broadcast_to_player(player.player_id, message)
-
-async def broadcast_to_current_player(session_id: str, message: dict):
-    if session_id not in sessions:
-        return
-    
-    session = sessions[session_id]
-    game = session.current_game
-    if game is not None:
-        await manager.broadcast_to_player(game.current_player, message)
-                
-
-
 
 @app.websocket("/ws/{session_id}/{player_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: str):
-    print("Active sessions:", list(sessions.keys()))
-    print("Active players:", list(players.keys()))
+    """ Establish a WebSocket connection for real-time communication.
+
+    Args:
+        websocket (WebSocket): The WebSocket connection
+        session_id (str): The ID of the session to join
+        player_id (str): The ID of the player joining the session
+
+    Raises:
+        HTTPException: If the session or player does not exist
+    
+    """
+    # Validate session and player and close connection if invalid
     if session_id not in sessions or player_id not in players:
         await websocket.close(code=1008)
         print(f"Invalid session {session_id} or player {player_id}")
         return
-        
 
 
+    # Accept the WebSocket connection and broadcast join event to session
     await manager.connect(session_id, player_id, websocket)
-
     current_session = sessions[session_id]
-
     await manager.broadcast_to_session(
         session_id,
         {
@@ -131,6 +80,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
         },
     )
 
+    # Listen for incoming messages from the client and handles disconnections
     try:
         while True:
             # We can listen if players send messages too
@@ -146,6 +96,13 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str, player_id: s
 
 @app.post("/session/create")
 def create_session(entered_name: CreateJoinSessionRequest):
+    """ Create a new game session with a leader player
+    Args:
+        entered_name (CreateJoinSessionRequest): The name of the player creating the session
+    Raises:
+        HTTPException: If the name is blank
+    """
+
     if len(entered_name.name) == 0:
         raise HTTPException(status_code=400, detail="Blank name not allowed")
     
@@ -159,6 +116,7 @@ def create_session(entered_name: CreateJoinSessionRequest):
     
     players[new_player_id] = player
 
+    # Create session and add leader player
     new_session = Session(
         session_id = new_session_id,
         leader = player
@@ -166,6 +124,8 @@ def create_session(entered_name: CreateJoinSessionRequest):
     new_session.players.append(player)
     
     sessions[new_session_id] = new_session
+
+    # Return session info including player ID
     response = dict(new_session.model_dump())
     response["you"] = new_player_id
     print(f"Created session {new_session_id} with player {new_player_id}")
@@ -174,7 +134,16 @@ def create_session(entered_name: CreateJoinSessionRequest):
 
 @app.post("/session/{session_id}/join")
 def join_game(session_id: str, entered_name: CreateJoinSessionRequest):
-    """Join an existing game"""
+    """ Join an existing game session as a new player.
+    
+    Args:
+        session_id (str): The ID of the session to join
+        entered_name (CreateJoinSessionRequest): The name of the player joining the session
+    Raises:
+        HTTPException: If the session does not exist, is full, or the name is blank
+
+    """
+
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Game not found")
     
@@ -186,6 +155,7 @@ def join_game(session_id: str, entered_name: CreateJoinSessionRequest):
     if len(entered_name.name) == 0:
         raise HTTPException(status_code=400, detail="Blank name not allowed")
     
+    # Create new player and add to session
     new_player_id = str(uuid.uuid4())[:8]
     player = Player(
         player_id = new_player_id,
@@ -201,6 +171,16 @@ def join_game(session_id: str, entered_name: CreateJoinSessionRequest):
 
 @app.post("/session/{session_id}/leave")
 async def leave_game(session_id: str, leaveReq: LeaveSessionRequest):
+    """ Leave a game session.
+
+    Args:
+        session_id (str): The ID of the session to leave
+        leaveReq (LeaveSessionRequest): The player ID of the player leaving the session
+
+    Raises:
+        HTTPException: If the session or player does not exist
+    """
+
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Game not found")
     
@@ -212,10 +192,12 @@ async def leave_game(session_id: str, leaveReq: LeaveSessionRequest):
     
     player = players[player_id]
 
+    # Remove player from session and current game if active
     await session.leave(player)
     del players[player_id]
     await manager.disconnect(session_id, player_id)
 
+    # Notify remaining players if session has > 2 players or session still has lobby leader in lobby
     if len(session.players) > 1 or (len(session.players) == 1 and not session.active_game() and (player_id != session.leader.player_id)):
         await manager.broadcast_to_session(
             session_id,
@@ -225,6 +207,7 @@ async def leave_game(session_id: str, leaveReq: LeaveSessionRequest):
             },
         )
     else:
+        # Otherwise close session and notify remaining players
         for remaining_player in session.players:
             await session.leave(remaining_player)
             await manager.broadcast_to_player(
@@ -248,7 +231,13 @@ async def leave_game(session_id: str, leaveReq: LeaveSessionRequest):
     
 @app.post("/session/{session_id}/start")
 async def start_game(session_id: str, player_id: str):
-    """Start the game"""
+    """Start the game
+    Args:
+        session_id (str): The ID of the session to start
+        player_id (str): The ID of the player requesting the start
+    Raises:
+        HTTPException: If the session does not exist, has insufficient players, the requester is not the leader, or a game is already in progress
+    """
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Game not found")
     
@@ -260,40 +249,34 @@ async def start_game(session_id: str, player_id: str):
     if session.active_game() != False:
         raise HTTPException(status_code=403, detail="Game in progress")
     
-    # Create Game
-    # Pick random target color
-    
-    
-    # Pick random starting player
-    
+    # Create new game instance and start it up
     new_game_id = str(uuid.uuid4())[:8]
-
     game = Game(
         game_id=new_game_id,
         session_id=session_id,
         players=session.players,
     )
 
-
     session.current_game = game
-
     await game.startup()
     
     return {"status": "success", "message": "game created"}
 
 @app.get("/session/{session_id}")
 async def get_game(session_id: str):
-    """Gets the game"""
+    """Gets the session state.
+    
+    Args:
+        session_id (str): The ID of the session to get
+    Raises:
+        HTTPException: If the session does not exist
+    """
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Game not found")
     
     session = sessions[session_id]
     
     return {"event": "session_update", "data": session.model_dump()}
-
-
-
-
 
 if __name__ == "__main__":
     import uvicorn

@@ -2,6 +2,13 @@ from typing import Dict, List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 
 class ConnectionManager:
+    """
+    Manages WebSocket connections for game sessions and players.
+
+    Attributes:
+        active_connections (Dict[str, List[WebSocket]]): Maps session IDs to lists of WebSocket connections.
+        player_connections (Dict[str, WebSocket]): Maps player IDs to their WebSocket connections.
+    """
     def __init__(self):
         # session_id -> list of WebSockets
         self.active_connections: Dict[str, List[WebSocket]] = {}
@@ -9,6 +16,14 @@ class ConnectionManager:
         self.player_connections: Dict[str, WebSocket] = {}
 
     async def connect(self, session_id: str, player_id: str, websocket: WebSocket):
+        """Establish a WebSocket connection for a player in a session.
+
+        Args:
+            session_id (str): The ID of the session.
+            player_id (str): The ID of the player.
+            websocket (WebSocket): The WebSocket connection to establish.
+        """
+
         await websocket.accept()
         print(f"🔌 {player_id} connected to game {session_id}")
 
@@ -19,6 +34,14 @@ class ConnectionManager:
         self.player_connections[player_id] = websocket
 
     async def disconnect(self, session_id: str, player_id: str, socketOpen: bool = True):
+        """Disconnect a player's WebSocket from a session.
+
+        Args:
+            session_id (str): The ID of the session.
+            player_id (str): The ID of the player.
+            socketOpen (bool): Whether the socket is currently open.
+        """
+
         if player_id in self.player_connections:
             websocket = self.player_connections[player_id]
 
@@ -42,7 +65,12 @@ class ConnectionManager:
             
 
     async def broadcast_to_session(self, session_id: str, message: dict):
-        """Send a message to all players in a given session."""
+        """Send a message to all players in a given session.
+        Args:
+            session_id (str): The ID of the session.
+            message (dict): The message to send.
+        """
+
         if session_id in self.active_connections:
             for ws in list(self.active_connections[session_id]):  # list() to avoid mutation issues
                 try:
@@ -51,7 +79,12 @@ class ConnectionManager:
                     print(f"❌ Failed to send to session {session_id}: {e}")
 
     async def broadcast_to_player(self, player_id: str, message: dict):
-        """Send a message to a specific player."""
+        """Send a message to a specific player.
+        Args:
+            player_id (str): The ID of the player.
+            message (dict): The message to send.
+        """
+
         if player_id in self.player_connections:
             ws = self.player_connections[player_id]
             try:
@@ -60,7 +93,13 @@ class ConnectionManager:
                 print(f"❌ Could not send to player {player_id}: {e}")
 
     async def broadcast_game_state(self, game, event: Optional[str] = "game_update", exclude_colors=True):
-        """Send each player a personalized view of the game state."""
+        """Send each player a personalized view of the game state.
+        
+        Args:
+            game (Game): The game instance.
+            event (Optional[str]): The event name to send.
+            exclude_colors (bool): Whether to exclude color information from the game state.
+        """
         for p in game.players:
             player_id = p.player_id
             data = {

@@ -1,10 +1,15 @@
-import asyncio
 from abc import ABC, abstractmethod
 from pydantic import BaseModel
-from connection_manager import manager
 from player import Player
 
 class Phase(ABC):
+    """ Abstract base class for game phases.
+    Attributes:
+        game (Game): The game instance this phase belongs to.
+        duration (int): Duration of the phase in seconds.
+        started (bool): Whether the phase has started.
+        ended (bool): Whether the phase has ended.
+    """
     def __init__(self, game: "Game", duration: int = 0):
         self.game = game
         self.duration = duration
@@ -13,23 +18,28 @@ class Phase(ABC):
 
     @property
     def name(self):
+        """Return the name of the phase in lowercase without the 'Phase' suffix."""
         return self.__class__.__name__.replace("Phase", "").lower()
 
     async def start(self):
+        """Start the phase if it hasn't been started yet."""
         if not self.started:
             await self._start_phase()
             self.started = True
 
     @abstractmethod
     async def _start_phase(self):
+        """Perform phase-specific startup actions."""
         pass
 
     @abstractmethod
     async def handle_event(self, sender: str, event: str, data: dict):
+        """Handle an event during the phase."""
         pass
 
     async def end(self):
-        if not self.ended:  # and self.end_phase:
+        """End the phase if it hasn't been ended yet."""
+        if not self.ended:
             await self._end_phase()
             self.ended = True
 
@@ -37,10 +47,12 @@ class Phase(ABC):
     # instead of one field holding current phase, we can hold a list of next phases as well.
     @abstractmethod
     async def _end_phase(self):
+        """Perform phase-specific cleanup actions."""
         pass
 
 
 class StartUpPhase(Phase):
+    """Phase representing the startup of the game with a set duration."""
     def __init__(self, game, duration=0):
         super().__init__(game, 5)
 
@@ -55,6 +67,7 @@ class StartUpPhase(Phase):
 
 
 class HintingPhase(Phase):
+    """Phase where the current player give hints about the target color."""
     def __init__(self, game, duration=0):
         super().__init__(game, 30)
 
@@ -68,13 +81,19 @@ class HintingPhase(Phase):
 
     async def _end_phase(self):
         await self.game.set_phase(GuessingPhase(self.game))
-        print("ENDING PHASE")
 
 class Guess(BaseModel):
+    """ Model representing a player's guess.
+    Attributes:
+        player (Player): The player making the guess.
+        position (tuple): The (row, col) position guessed by the player.
+    """
     player: Player
     position: tuple  # (row, col)
 
 class GuessingPhase(Phase):
+    """Phase where non-current players make guesses about the target color."""
+
     def __init__(self, game, duration=0):
         super().__init__(game, 60)
 
@@ -107,6 +126,12 @@ class GuessingPhase(Phase):
 
 
 class ChoicePhase(Phase):
+    """Phase where the current player chooses to continue or end the round.
+
+    Attributes:
+        end_round (bool): Whether the round should end.
+    """
+
     def __init__(self, game, duration=0):
         super().__init__(game, 30)
         self.end_round = False
@@ -135,6 +160,7 @@ class ChoicePhase(Phase):
             await self.game.set_phase(HintingPhase(self.game))
 
 class NonePhase(Phase):
+    """Phase representing no active phase (used when game is over)."""
     async def _start_phase(self):
         pass
 
@@ -145,6 +171,7 @@ class NonePhase(Phase):
         pass
 
 class EndGamePhase(Phase):
+    """Phase representing the end of the game."""
     def __init__(self, game, duration=0):
         super().__init__(game, 10)
 
@@ -158,6 +185,7 @@ class EndGamePhase(Phase):
         await self.game.end_game()
 
 class ScorePhase(Phase):
+    """Phase where scores are calculated and awarded."""
     def __init__(self, game, duration=0):
         super().__init__(game, 5)
 

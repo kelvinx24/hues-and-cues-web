@@ -1,24 +1,44 @@
 import asyncio
-from enum import Enum
 import random
 from pydantic import BaseModel, PrivateAttr
-from typing import List, Optional, Dict
+from typing import List, Optional
 from player import Player
 from connection_manager import manager
-from phase import Phase, HintingPhase, GuessingPhase, ChoicePhase, Guess, StartUpPhase, NonePhase
-
-class State(str, Enum):
-    WAITING = "waiting"
-    PLAYING = "playing"
-    FINISHED = "finished"
+from phase import Phase, HintingPhase, Guess, StartUpPhase, NonePhase
 
 class PlayerData(BaseModel):
+    """ Data specific to a player within a game.
+    
+    Attributes:
+        player (Player): The player this data belongs to.
+        score (int): The player's current score.
+        guess (tuple): The player's current guess (row, col) or None if not guessed yet.
+    """
     player: Player
     score: int = 0
     guess: tuple = None
 
 
 class Game(BaseModel):
+    """ Game model representing the state and logic of a Hues and Cues game.
+    
+    Attributes:
+        game_id (str): Unique identifier for the game.
+        session_id (str): The ID of the session this game belongs to.
+        is_over (bool): Indicates if the game is over.
+        players (List[Player]): List of players participating in the game.
+        target_color (Optional[tuple]): The target color for the current round (row, col).
+        current_player (Optional[str]): The player ID of the current player.
+        player_data (dict[str, PlayerData]): Mapping of player IDs to their game-specific data.
+        hints (List[str]): List of hints given in the current round.
+        guesses (List[Guess]): List of guesses made in the current round.
+        _phase (Optional[Phase]): The current phase of the game (internal use).
+        _timer_task (Optional[asyncio.Task]): The task managing the phase timer (internal use).
+        phase_time_remaining (int): Time remaining in the current phase.
+        current_round (int): The current round number.
+        total_rounds (int): Total number of rounds in the game.
+        colors (List[List]): The color grid used in the game.
+    """
     game_id: str
     session_id: str
     is_over: bool = False
@@ -28,12 +48,11 @@ class Game(BaseModel):
     player_data: dict[str, PlayerData] = {}
     hints: List[str] = []
     guesses: List[Guess] = []
-    status: State = State.PLAYING
     _phase: Optional[Phase] = PrivateAttr(default=None)
     _timer_task: Optional[asyncio.Task] = PrivateAttr(default=None)
     phase_time_remaining: int = 0
     current_round: int = 0
-    total_rounds: int = 2
+    total_rounds: int = 3
     colors: List[List] = [
         # Reds
         ["#8B0000", "#A52A2A", "#B22222", "#DC143C", "#FF0000", "#FF6347", "#FF7F50", "#CD5C5C", "#F08080", "#E9967A"],
@@ -58,6 +77,12 @@ class Game(BaseModel):
     ]
     
     async def startup(self):
+        """Initialize and start the game.
+
+        Sets up initial game state, assigns target color and current player,
+        initializes player data, and starts the first phase.
+        
+        """
         self.target_color = self.generate_random_color()
         self.current_player = self.generate_random_player()
         for p in self.players:
@@ -72,22 +97,37 @@ class Game(BaseModel):
 
         await self.set_phase(StartUpPhase(self))
 
-    
-
-
     def generate_random_color(self):
+        """Generate a random color from the color grid.
+        
+        Returns:
+            tuple: A tuple representing the (row, col) of the random color.
+        """
         row = random.randint(0, len(self.colors) - 1)
         col = random.randint(0, len(self.colors[0]) - 1)
         random_color = (row, col)
         return random_color
     
     def generate_random_player(self, exclude=None):
+        """Generate a random player ID from the list of players, excluding a specific player if provided.
+        
+        Args:
+            exclude (str, optional): Player ID to exclude from selection. Defaults to None.
+        
+        Returns:
+            str: The player ID of the randomly selected player.
+        """
         choices = [p for p in self.players if p.player_id != exclude]
         return random.choice(choices).player_id
 
 
     async def set_phase(self, phase):
-         # Cancel any existing timer
+        """Set the current phase of the game.
+        Args:
+            phase (Phase): The new phase to set.
+        """
+
+        # Cancel the existing timer task if running
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
             try:
@@ -95,13 +135,13 @@ class Game(BaseModel):
             except asyncio.CancelledError:
                 pass
 
-        """Start a new phase, replacing the current one."""
+        # Sets the new phase and starts its timer if applicable
         self._phase = phase
         await manager.broadcast_game_state(self)
 
         if phase.duration > 0:
             self._timer_task = asyncio.create_task(self.run_phase_timer(phase.duration))
-        # Start phase
+        
         await phase.start()
         await manager.broadcast_game_state(self)
 
@@ -126,6 +166,11 @@ class Game(BaseModel):
             await self._phase.end()
 
     async def handle_action(self, body: dict):
+        """ Handle an action within the game context.
+        Args:
+            body (dict): The action data containing event and associated data.
+        """
+
         player_id = body.get("player_id")
         event = body.get("event")
         data = body.get("data", {})
@@ -135,20 +180,31 @@ class Game(BaseModel):
             return
 
 
-        """Delegate an action to the active phase."""
+        # Delegate an action to the active phase.
         await self._phase.handle_event(player_id, event, data)
         await manager.broadcast_game_state(self)
 
     async def leave(self, player: Player):
+        """ Remove a player from the game.
+
+        Args:
+            player (Player): The player to remove from the game.
+
+        Returns:
+            bool: True if the player was removed, False otherwise.
+        """
         if player not in self.players:
             return False
         
+        # If removing the player would leave 2 or fewer players, end the game
         if len(self.players) <= 2:
             self.is_over = True
             self.clear_game()
             return True
         
+        # If the game is still ongoing, handle player removal based on current phase and player turn
         if not self.is_over:
+            # if the player leaving is the current player, reset the round
             if player.player_id == self.current_player:
                 self.reset_round()
                 self.players.remove(player)
@@ -159,23 +215,25 @@ class Game(BaseModel):
                 del self.player_data[player.player_id]
                 await manager.broadcast_game_state(self)
 
-        
-
             return True
 
-
-
     def reset_round(self):
+        """ Reset the current round state, selecting a new current player and target color,
+            and clearing hints and guesses.
+        """
         self.current_player = self.generate_random_player(
             exclude=self.current_player
         )
         self.target_color = self.generate_random_color()
         self.guesses.clear()
         self.hints.clear()
+
         for id, pd in self.player_data.items():
             pd.guess = None
 
     def clear_game(self):
+        """ Clear the game state when the game ends.
+        """
         self.players.clear()
         self.player_data.clear()
         self.guesses.clear()
@@ -184,12 +242,21 @@ class Game(BaseModel):
         self.phase_time_remaining = 0
 
     async def end_game(self):
+        """ End the game and notify all players.
+        """
         self.is_over = True
         await manager.broadcast_game_state(self, "game_end")
         
 
     def to_dict(self, for_player_id: Optional[str] = None, exclude_colors=True) -> dict:
-        """Return a JSON-safe dict representation of the game for a specific player."""
+        """Return a JSON-safe dict representation of the game for a specific player.
+        
+        Args:
+            for_player_id (Optional[str], optional): The player ID for whom the data is tailored
+            exclude_colors (bool, optional): Whether to exclude color information from the output. Defaults to True.    
+        Returns:
+            dict: The dictionary representation of the game.
+        """
 
         # Serialize all base data
         game_dict = self.model_dump(exclude_none=True)
